@@ -1,10 +1,11 @@
 module Inference.Monad where
 
-import Control.Monad.Reader
+import Control.Monad.RWS
 
 import qualified Builtin.Names as Builtin
 import Inference.Meta
 import Syntax
+import Syntax.Concrete.Scoped(ProbePos)
 import VIX
 
 type Polytype = AbstractM
@@ -26,13 +27,20 @@ data InferEnv = InferEnv
   , inferLevel :: !Level
   }
 
-type Infer = ReaderT InferEnv VIX
+type Infer = RWST InferEnv () [(ProbePos, AbstractM)] VIX
 
 runInfer :: Infer a -> VIX a
-runInfer i = runReaderT i InferEnv
-  { constraints = mempty
-  , inferLevel = 1
-  }
+runInfer i = do
+  (a, probeTypes, ~()) <- runRWST
+    i
+    InferEnv
+      { constraints = mempty
+      , inferLevel = 1
+      }
+    mempty
+  renderedProbeTypes <- traverse (traverse showMeta) probeTypes
+  liftVIX $ modify $ \s -> s { vixProbeTypes = renderedProbeTypes ++ vixProbeTypes s }
+  return a
 
 level :: Infer Level
 level = asks inferLevel

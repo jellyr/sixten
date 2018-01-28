@@ -5,6 +5,7 @@ import Control.Monad.Base
 import Control.Monad.Except
 import Control.Monad.Identity
 import Control.Monad.Reader
+import Control.Monad.RWS
 import Control.Monad.ST
 import Control.Monad.State
 import Control.Monad.Trans.Control
@@ -28,12 +29,11 @@ import Backend.Target as Target
 import Error
 import Syntax
 import Syntax.Abstract
+import Syntax.Concrete.Scoped (ProbePos(..))
 import qualified Syntax.Sized.Lifted as Lifted
 import TypeRep
 import Util.MultiHashMap(MultiHashMap)
 import qualified Util.MultiHashMap as MultiHashMap
-
-import Syntax.Concrete.Scoped (ProbePos(..))
 
 data VIXState = VIXState
   { vixLocation :: Maybe SourceLoc
@@ -49,6 +49,7 @@ data VIXState = VIXState
   , vixVerbosity :: !Int
   , vixTarget :: Target
   , vixProbePos :: Maybe ProbePos
+  , vixProbeTypes :: [(ProbePos, Doc)]
   }
 
 class Monad m => MonadVIX m where
@@ -75,6 +76,7 @@ emptyVIXState target handle verbosity = VIXState
   , vixVerbosity = verbosity
   , vixTarget = target
   , vixProbePos = Nothing
+  , vixProbeTypes = mempty
   }
 
 newtype VIX a = VIX (StateT VIXState (ExceptT Error IO) a)
@@ -293,5 +295,6 @@ instance MonadVIX m => MonadVIX (ReaderT r m)
 instance (Monoid w, MonadVIX m) => MonadVIX (WriterT w m)
 instance MonadVIX m => MonadVIX (StateT s m)
 instance MonadVIX m => MonadVIX (IdentityT m)
+instance (MonadVIX m, Monoid w) => MonadVIX (RWST r w s m)
 instance MonadVIX m => MonadVIX (IRBuilder.IRBuilderT m)
 instance MonadVIX m => MonadVIX (IRBuilder.ModuleBuilderT m)

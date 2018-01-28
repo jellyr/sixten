@@ -215,10 +215,10 @@ tcRho expr expected expectedAppResult = case expr of
     x <- existsVar mempty Explicit t
     f x
   Concrete.Probe e -> do
-    t <- existsType mempty
-    f <- instExpected expected t
+    e' <- tcRho e expected expectedAppResult
+    t <- typeOfM e'
     modify $ \probeTypes -> t : probeTypes
-    tcRho e expected expectedAppResult
+    return e'
   Concrete.SourceLoc loc e -> located loc $ tcRho e expected expectedAppResult
 
 tcBranches

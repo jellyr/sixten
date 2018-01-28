@@ -37,6 +37,7 @@ data Expr v
   | Case (Expr v) [(Pat (PatternScope Type v) (), PatternScope Expr v)]
   | ExternCode (Extern (Expr v))
   | Wildcard
+  | Probe (Expr v)
   | SourceLoc !SourceLoc (Expr v)
 
 -- | Synonym for documentation purposes

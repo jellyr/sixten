@@ -23,27 +23,39 @@ import Util.MultiHashMap(MultiHashMap)
 import qualified Util.MultiHashMap as MultiHashMap
 import Util.TopoSort
 import VIX
+import Text.Parsix.Position
 
-newtype ScopeEnv = ScopeEnv
-  { scopeConstrs :: QName -> HashSet QConstr
+data ProbePos = ProbePos
+  { line :: Int
+  , col :: Int
   }
 
-type ScopeCheck = RWS ScopeEnv () (HashSet QName)
+within :: ProbePos -> Span -> Bool
+within (ProbePos y x) (Span (Position _ y0 x0) (Position _ y1 x1)) =
+  (y0 <= y && y <= y1) && (y0 /= y || x >= x0) && (y1 /= y || x <= x1)
+
+data ScopeEnv = ScopeEnv
+  { scopeConstrs :: QName -> HashSet QConstr
+  , probePos :: Maybe ProbePos
+  }
+
+type ScopeCheck = RWS ScopeEnv Any (HashSet QName)
 
 runScopeCheck :: ScopeCheck a -> ScopeEnv -> (a, HashSet QName)
 runScopeCheck m env = (a, s)
   where
-    (a, s, ~()) = runRWS m env mempty
+    (a, s, _) = runRWS m env mempty
 
 -- TODO split into several functions
 -- TODO use plain Name for unresolved names
 scopeCheckModule
-  :: Module (HashMap QName (SourceLoc, Unscoped.TopLevelDefinition))
+  :: Maybe ProbePos
+  -> Module (HashMap QName (SourceLoc, Unscoped.TopLevelDefinition))
   -> VIX [[(QName, SourceLoc, Scoped.TopLevelPatDefinition Scoped.Expr void, Maybe (Scoped.Type void))]]
-scopeCheckModule modul = do
+scopeCheckModule probePos modul = do
   otherNames <- liftVIX $ gets vixModuleNames
 
-  let env = ScopeEnv lookupConstr
+  let env = ScopeEnv lookupConstr probePos
       lookupConstr c = MultiHashMap.lookup c constrs
       constrs = MultiHashMap.fromList
         [ (QName mempty $ fromConstr c, QConstr n c)
@@ -236,7 +248,14 @@ scopeCheckExpr expr = case expr of
     <*> mapM (uncurry scopeCheckBranch) pats
   Unscoped.ExternCode c -> Scoped.ExternCode <$> mapM scopeCheckExpr c
   Unscoped.Wildcard -> return Scoped.Wildcard
-  Unscoped.SourceLoc loc e -> Scoped.SourceLoc loc <$> scopeCheckExpr e
+  Unscoped.SourceLoc loc e -> do
+    mpos <- asks probePos
+    (e', Any added) <- listen $ scopeCheckExpr e
+    Scoped.SourceLoc loc <$> case mpos of
+      Just pos | not added && pos `within` sourceLocSpan loc -> do
+        tell (Any True)
+        return (Scoped.Probe e')
+      _ -> return e'
 
 scopeCheckBranch
   :: Pat Unscoped.Expr QName

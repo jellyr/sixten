@@ -21,7 +21,7 @@ data Expr
   | Case Expr [(Pat Expr QName, Expr)]
   | ExternCode (Extern Expr)
   | Wildcard
-  | SourceLoc !SourceLoc Type
+  | SourceLoc !SourceLoc Expr
   deriving Show
 
 type Type = Expr

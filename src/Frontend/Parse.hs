@@ -14,6 +14,7 @@ import qualified Data.Set as Set
 import Data.String
 import Data.Text(Text)
 import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
 import qualified Data.Text.Prettyprint.Doc as PP
 import qualified Data.Vector as Vector
 import qualified Text.Parser.LookAhead as LookAhead
@@ -45,9 +46,9 @@ parseTest p = Parsix.parseTest $ runReaderT (runParser p) env <* Parsix.eof
   where
     env = ParseEnv (Position 0 0 0) "<interactive>"
 
-parseFromFileEx :: MonadIO m => Parser a -> FilePath -> m (Result a)
-parseFromFileEx p fp = do
-  res <- Parsix.parseFromFileEx (runReaderT (runParser p) env <* Parsix.eof) fp
+parseText :: MonadIO m => Parser a -> Text -> FilePath -> m (Result a)
+parseText p inp fp = do
+  let res = Parsix.parseText (runReaderT (runParser p) env <* Parsix.eof) inp fp
   return $ case res of
     Parsix.Failure e -> Failure
       $ pure
@@ -67,6 +68,11 @@ parseFromFileEx p fp = do
     Parsix.Success a -> return a
   where
     env = ParseEnv (Position 0 0 0) fp
+
+parseFromFileEx :: MonadIO m => Parser a -> FilePath -> m (Result a)
+parseFromFileEx p fp = do
+  inp <- liftIO $ Text.readFile fp
+  parseText p inp fp
 
 instance Parsix.TokenParsing Parser where
   someSpace = Parsix.skipSome (Parsix.satisfy isSpace) *> (comments <|> pure ())

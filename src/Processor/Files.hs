@@ -2,15 +2,18 @@
 module Processor.Files where
 
 import Control.Monad.Except
+import Control.Monad.State
 import Data.HashMap.Lazy(HashMap)
 import qualified Data.HashMap.Lazy as HashMap
 import qualified Data.HashSet as HashSet
 import Data.List.NonEmpty(NonEmpty)
 import Data.Semigroup
+import Data.Text(Text)
 import qualified Data.Text.Prettyprint.Doc as PP
+import qualified Data.Text.Prettyprint.Doc.Render.Text as PP
 import GHC.IO.Handle
 import System.FilePath
-import Control.Monad.State
+import System.IO
 
 import qualified Backend.Generate as Generate
 import Backend.Target
@@ -19,8 +22,8 @@ import Paths_sixten(getDataFileName)
 import qualified Processor.File as File
 import Processor.Result
 import Syntax
-import qualified Syntax.Concrete.Unscoped as Unscoped
 import qualified Syntax.Concrete.Scoped as Scoped
+import qualified Syntax.Concrete.Unscoped as Unscoped
 import Util.TopoSort
 import VIX
 
@@ -52,6 +55,15 @@ parseFiles srcFiles = do
     return $ fmap (:[]) $ File.dupCheck =<< parseResult
   return $ sconcat moduleResults
 
+parseTexts
+  :: NonEmpty (FilePath, Text)
+  -> IO (Result [Module (HashMap QName (SourceLoc, Unscoped.TopLevelDefinition))])
+parseTexts srcTexts = do
+  moduleResults <- forM srcTexts $ \(fp, t) -> do
+    parseResult <- File.parseText t fp
+    return $ fmap (:[]) $ File.dupCheck =<< parseResult
+  return $ sconcat moduleResults
+
 populate :: Arguments -> VIX ()
 populate args = liftVIX $ modify (\ v -> v { vixProbePos = probePos args })
 
@@ -64,6 +76,29 @@ checkFiles args = do
           _ <- compileBuiltins -- Done only for the side effects
           orderedModules <- cycleCheck modules
           mapM_ (File.frontend $ const $ return []) orderedModules
+    fromEither <$> runVIX go (target args) (logHandle args) (verbosity args)
+
+vfsCheck :: NonEmpty (FilePath, Text) -> Scoped.ProbePos -> IO (Result [(Scoped.ProbePos, Text)])
+vfsCheck vfiles probe = do
+  parseResult <- parseTexts vfiles
+  let args = Arguments
+        { sourceFiles = fst <$> vfiles
+        , assemblyDir = ""
+        , target = defaultTarget
+        , logHandle = stdout
+        , verbosity = 0
+        , probePos = Just probe
+        }
+  fmap join $ forM parseResult $ \modules -> do
+    let go = do
+          populate args
+          _ <- compileBuiltins -- Done only for the side effects
+          orderedModules <- cycleCheck modules
+          mapM_ (File.frontend $ const $ return []) orderedModules
+          liftVIX
+            $ gets
+            $ fmap (fmap $ PP.renderStrict . PP.layoutSmart PP.defaultLayoutOptions)
+            . vixProbeTypes
     fromEither <$> runVIX go (target args) (logHandle args) (verbosity args)
 
 processFiles :: Arguments -> IO (Result ProcessFilesResult)

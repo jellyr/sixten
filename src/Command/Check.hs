@@ -3,6 +3,8 @@
 {-# LANGUAGE PatternGuards #-}
 module Command.Check where
 
+import Data.List.NonEmpty as NonEmpty
+import Data.List.Split as Split
 import Data.Monoid
 import qualified Data.Text.IO as Text
 import Options.Applicative
@@ -14,10 +16,6 @@ import Command.Check.Options
 import Error
 import qualified Processor.Files as Processor
 import qualified Processor.Result as Processor
-
-import Data.List.Split as Split
-import Data.List.NonEmpty as NonEmpty
-
 import qualified Syntax.Concrete.Scoped as Scoped
 
 optionsParserInfo :: ParserInfo Options

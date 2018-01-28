@@ -329,6 +329,12 @@ parse
   -> IO (Result (Module [(SourceLoc, Unscoped.TopLevelDefinition)]))
 parse = Parse.parseFromFileEx Parse.modul
 
+parseText
+  :: Text
+  -> FilePath
+  -> IO (Result (Module [(SourceLoc, Unscoped.TopLevelDefinition)]))
+parseText = Parse.parseText Parse.modul
+
 dupCheck
   :: Module [(SourceLoc, Unscoped.TopLevelDefinition)]
   -> Result (Module (HashMap QName (SourceLoc, Unscoped.TopLevelDefinition)))

@@ -5,7 +5,6 @@ import Control.Monad.RWS
 import qualified Builtin.Names as Builtin
 import Inference.Meta
 import Syntax
-import Syntax.Concrete.Scoped(ProbePos)
 import VIX
 
 type Polytype = AbstractM

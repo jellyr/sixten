@@ -42,10 +42,11 @@ data Expr v
   | SourceLoc !SourceLoc (Expr v)
 
 data ProbePos = ProbePos
-  { probeLine :: Int
+  { probeFile :: FilePath
+  , probeLine :: Int
   , probeCol :: Int
-  , probeFile :: FilePath
   }
+  deriving (Eq, Ord, Show)
 
 -- | Synonym for documentation purposes
 type Type = Expr
@@ -121,6 +122,7 @@ instance GlobalBind Expr where
     Case e brs -> Case (bind f g e) (bimap (first (bound f g)) (bound f g) <$> brs)
     ExternCode c -> ExternCode (bind f g <$> c)
     Wildcard -> Wildcard
+    Probe e -> Probe (bind f g e)
     SourceLoc r e -> SourceLoc r (bind f g e)
 
 instance Applicative Expr where
@@ -149,6 +151,7 @@ instance Traversable Expr where
       <*> traverse (bitraverse (bitraverse (traverse f) pure) (traverse f)) brs
     ExternCode c -> ExternCode <$> traverse (traverse f) c
     SourceLoc r e -> SourceLoc r <$> traverse f e
+    Probe e -> Probe <$> traverse f e
     Wildcard -> pure Wildcard
 
 instance v ~ Doc => Pretty (Expr v) where

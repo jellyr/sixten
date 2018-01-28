@@ -10,6 +10,7 @@ import Data.Semigroup
 import qualified Data.Text.Prettyprint.Doc as PP
 import GHC.IO.Handle
 import System.FilePath
+import Control.Monad.State
 
 import qualified Backend.Generate as Generate
 import Backend.Target
@@ -19,6 +20,7 @@ import qualified Processor.File as File
 import Processor.Result
 import Syntax
 import qualified Syntax.Concrete.Unscoped as Unscoped
+import qualified Syntax.Concrete.Scoped as Scoped
 import Util.TopoSort
 import VIX
 
@@ -28,6 +30,7 @@ data Arguments = Arguments
   , target :: !Target
   , logHandle :: !Handle
   , verbosity :: !Int
+  , probePos :: Maybe Scoped.ProbePos
   } deriving (Eq, Show)
 
 data ProcessFilesResult = ProcessFilesResult
@@ -49,11 +52,15 @@ parseFiles srcFiles = do
     return $ fmap (:[]) $ File.dupCheck =<< parseResult
   return $ sconcat moduleResults
 
+populate :: Arguments -> VIX ()
+populate args = liftVIX $ modify (\ v -> v { vixProbePos = probePos args })
+
 checkFiles :: Arguments -> IO (Result ())
 checkFiles args = do
   parseResult <- parseFiles $ sourceFiles args
   fmap join $ forM parseResult $ \modules -> do
     let go = do
+          populate args
           _ <- compileBuiltins -- Done only for the side effects
           orderedModules <- cycleCheck modules
           mapM_ (File.frontend $ const $ return []) orderedModules
@@ -64,6 +71,7 @@ processFiles args = do
   parseResult <- parseFiles $ sourceFiles args
   fmap join $ forM parseResult $ \modules -> do
     let go = do
+          populate args
           builtins <- compileBuiltins
           orderedModules <- cycleCheck modules
           compiledModules <- forM orderedModules $ \modul -> do

@@ -213,6 +213,7 @@ tcRho expr expected expectedAppResult = case expr of
     f <- instExpected expected t
     x <- existsVar mempty Explicit t
     f x
+  Concrete.Probe e -> tcRho e expected expectedAppResult
   Concrete.SourceLoc loc e -> located loc $ tcRho e expected expectedAppResult
 
 tcBranches

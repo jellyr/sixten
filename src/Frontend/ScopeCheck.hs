@@ -28,7 +28,7 @@ import Text.Parsix.Position
 
 within :: ProbePos -> SourceLoc -> Bool
 within
-    (ProbePos y x file)
+    (ProbePos file y x)
     (SourceLocation {
       sourceLocSpan = Span (Position _ y0 x0) (Position _ y1 x1),
       sourceLocFile = file0

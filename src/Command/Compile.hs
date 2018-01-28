@@ -89,6 +89,7 @@ compile opts onError onSuccess = case maybe (Right Target.defaultTarget) Target.
         , Processor.target = tgt
         , Processor.logHandle = logHandle
         , Processor.verbosity = Check.verbosity . checkOptions $ opts
+        , Processor.probePos = Nothing
         }
       case procResult of
         Processor.Failure errs -> onError errs

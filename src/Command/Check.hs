@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE PatternGuards #-}
 module Command.Check where
 
 import Data.Monoid
@@ -12,6 +14,10 @@ import Command.Check.Options
 import Error
 import qualified Processor.Files as Processor
 import qualified Processor.Result as Processor
+
+import Data.List.Split as Split
+
+import qualified Syntax.Concrete.Scoped as Scoped
 
 optionsParserInfo :: ParserInfo Options
 optionsParserInfo = info (helper <*> optionsParser)
@@ -40,6 +46,21 @@ optionsParser = Options
     <> help "Write logs to FILE instead of standard output"
     <> action "file"
     )
+  <*> optional (option parseProbePos
+    $ long "probe"
+    <> metavar "FILE:LINE:COL"
+    <> help "Probe information at a position in the program"
+    <> action "file"
+    )
+  where
+    parseProbePos :: ReadM Scoped.ProbePos
+    parseProbePos = eitherReader $ \ s ->
+      case Split.splitOn ":" s of
+        [file, sline, scol]
+          | [(line, "")] <- reads sline,
+            [(col, "")] <- reads scol
+          -> Right (Scoped.ProbePos file (line-1) (col-1))
+        _ -> Left $ "Use format FILE:LINE:COL, you wrote: " ++ s
 
 check
   :: Options
@@ -51,6 +72,7 @@ check opts = withLogHandle (logFile opts) $ \logHandle -> do
         , Processor.target = Target.defaultTarget
         , Processor.logHandle = logHandle
         , Processor.verbosity = verbosity opts
+        , Processor.probePos = probePos opts
         }
   case procResult of
     Processor.Failure errs -> mapM_ printError errs

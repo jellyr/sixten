@@ -78,7 +78,7 @@ checkFiles args = do
           mapM_ (File.frontend $ const $ return []) orderedModules
     fromEither <$> runVIX go (target args) (logHandle args) (verbosity args)
 
-vfsCheck :: NonEmpty (FilePath, Text) -> Scoped.ProbePos -> IO (Result [(Scoped.ProbePos, Text)])
+vfsCheck :: NonEmpty (FilePath, Text) -> Scoped.ProbePos -> IO (Result [Text])
 vfsCheck vfiles probe = do
   parseResult <- parseTexts vfiles
   let args = Arguments
@@ -97,7 +97,7 @@ vfsCheck vfiles probe = do
           mapM_ (File.frontend $ const $ return []) orderedModules
           liftVIX
             $ gets
-            $ fmap (fmap $ PP.renderStrict . PP.layoutSmart PP.defaultLayoutOptions)
+            $ fmap (PP.renderStrict . PP.layoutSmart PP.defaultLayoutOptions)
             . vixProbeTypes
     fromEither <$> runVIX go (target args) (logHandle args) (verbosity args)
 

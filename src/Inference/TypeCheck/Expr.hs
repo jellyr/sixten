@@ -7,6 +7,7 @@ import Data.Monoid
 import Data.STRef
 import qualified Data.Vector as Vector
 
+import Control.Monad.State
 import Analysis.Simplify
 import qualified Builtin.Names as Builtin
 import Inference.Constraint
@@ -213,7 +214,11 @@ tcRho expr expected expectedAppResult = case expr of
     f <- instExpected expected t
     x <- existsVar mempty Explicit t
     f x
-  Concrete.Probe e -> tcRho e expected expectedAppResult
+  Concrete.Probe e -> do
+    t <- existsType mempty
+    f <- instExpected expected t
+    modify $ \probeTypes -> t : probeTypes
+    tcRho e expected expectedAppResult
   Concrete.SourceLoc loc e -> located loc $ tcRho e expected expectedAppResult
 
 tcBranches

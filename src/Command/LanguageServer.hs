@@ -1,11 +1,7 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE PatternGuards #-}
 module Command.LanguageServer where
 
 import Data.Monoid
@@ -47,6 +43,7 @@ import Data.Aeson (ToJSON)
 import qualified System.IO as IO
 
 import Data.Char as Char
+import Data.Foldable
 
 import qualified Yi.Rope as Yi
 import Data.Text (Text)
@@ -82,8 +79,7 @@ hover lf (TextDocumentPositionParams (TextDocumentIdentifier uri) p@(Position li
   res <- Processor.vfsCheck (pure (uri_str, contents)) (ProbePos uri_str line char)
   sendNotification lf (show res)
   return $ Just Hover {
-    _contents=LSP.List [ LSP.PlainString msg | (_probe_pos,msg) <- fold res ],
-    -- _contents=LSP.List [ LSP.PlainString (T.pack (show (uri,p,res))) ],
+    _contents=LSP.List [ LSP.PlainString msg | msg <- fold res ],
     _range=Nothing
   }
 

@@ -27,7 +27,7 @@ data InferEnv = InferEnv
   , inferLevel :: !Level
   }
 
-type Infer = RWST InferEnv () [(ProbePos, AbstractM)] VIX
+type Infer = RWST InferEnv () [AbstractM] VIX
 
 runInfer :: Infer a -> VIX a
 runInfer i = do
@@ -38,7 +38,7 @@ runInfer i = do
       , inferLevel = 1
       }
     mempty
-  renderedProbeTypes <- traverse (traverse showMeta) probeTypes
+  renderedProbeTypes <- traverse showMeta probeTypes
   liftVIX $ modify $ \s -> s { vixProbeTypes = renderedProbeTypes ++ vixProbeTypes s }
   return a
 

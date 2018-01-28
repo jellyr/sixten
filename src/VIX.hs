@@ -49,7 +49,7 @@ data VIXState = VIXState
   , vixVerbosity :: !Int
   , vixTarget :: Target
   , vixProbePos :: Maybe ProbePos
-  , vixProbeTypes :: [(ProbePos, Doc)]
+  , vixProbeTypes :: [Doc]
   }
 
 class Monad m => MonadVIX m where

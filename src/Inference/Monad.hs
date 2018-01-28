@@ -37,7 +37,7 @@ runInfer i = do
       , inferLevel = 1
       }
     mempty
-  renderedProbeTypes <- traverse showMeta probeTypes
+  renderedProbeTypes <- traverse (zonk >=> showMeta) probeTypes
   liftVIX $ modify $ \s -> s { vixProbeTypes = renderedProbeTypes ++ vixProbeTypes s }
   return a
 

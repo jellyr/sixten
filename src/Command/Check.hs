@@ -16,6 +16,7 @@ import qualified Processor.Files as Processor
 import qualified Processor.Result as Processor
 
 import Data.List.Split as Split
+import Data.List.NonEmpty as NonEmpty
 
 import qualified Syntax.Concrete.Scoped as Scoped
 
@@ -48,7 +49,7 @@ optionsParser = Options
     )
   <*> optional (option parseProbePos
     $ long "probe"
-    <> metavar "FILE:LINE:COL"
+    <> metavar "[FILE:]LINE:COL"
     <> help "Probe information at a position in the program"
     <> action "file"
     )
@@ -60,7 +61,11 @@ optionsParser = Options
           | [(line, "")] <- reads sline,
             [(col, "")] <- reads scol
           -> Right (Scoped.ProbePos file (line-1) (col-1))
-        _ -> Left $ "Use format FILE:LINE:COL, you wrote: " ++ s
+        [sline, scol]
+          | [(line, "")] <- reads sline,
+            [(col, "")] <- reads scol
+          -> Right (Scoped.ProbePos "" (line-1) (col-1))
+        _ -> Left $ "Use format [FILE:]LINE:COL, you wrote: " ++ s
 
 check
   :: Options
@@ -72,7 +77,9 @@ check opts = withLogHandle (logFile opts) $ \logHandle -> do
         , Processor.target = Target.defaultTarget
         , Processor.logHandle = logHandle
         , Processor.verbosity = verbosity opts
-        , Processor.probePos = probePos opts
+        , Processor.probePos = case (probePos opts) of
+            Just (Scoped.ProbePos "" l c) -> Just (Scoped.ProbePos (NonEmpty.head (inputFiles opts)) l c)
+            mpos -> mpos
         }
   case procResult of
     Processor.Failure errs -> mapM_ printError errs

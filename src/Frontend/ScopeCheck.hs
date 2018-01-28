@@ -18,6 +18,7 @@ import Syntax
 import Syntax.Concrete.Pattern
 import qualified Syntax.Concrete.Scoped as Scoped
 import qualified Syntax.Concrete.Unscoped as Unscoped
+import Syntax.Concrete.Scoped (ProbePos(..))
 import Util
 import Util.MultiHashMap(MultiHashMap)
 import qualified Util.MultiHashMap as MultiHashMap
@@ -25,14 +26,17 @@ import Util.TopoSort
 import VIX
 import Text.Parsix.Position
 
-data ProbePos = ProbePos
-  { line :: Int
-  , col :: Int
-  }
-
-within :: ProbePos -> Span -> Bool
-within (ProbePos y x) (Span (Position _ y0 x0) (Position _ y1 x1)) =
-  (y0 <= y && y <= y1) && (y0 /= y || x >= x0) && (y1 /= y || x <= x1)
+within :: ProbePos -> SourceLoc -> Bool
+within
+    (ProbePos y x file)
+    (SourceLocation {
+      sourceLocSpan = Span (Position _ y0 x0) (Position _ y1 x1),
+      sourceLocFile = file0
+    }) =
+  file == file0 &&
+  (y0 <= y && y <= y1) &&
+  (y0 /= y || x >= x0) &&
+  (y1 /= y || x <= x1)
 
 data ScopeEnv = ScopeEnv
   { scopeConstrs :: QName -> HashSet QConstr
@@ -252,9 +256,9 @@ scopeCheckExpr expr = case expr of
     mpos <- asks probePos
     (e', Any added) <- listen $ scopeCheckExpr e
     Scoped.SourceLoc loc <$> case mpos of
-      Just pos | not added && pos `within` sourceLocSpan loc -> do
-        tell (Any True)
-        return (Scoped.Probe e')
+      Just pos | not added && pos `within` loc -> do
+          tell (Any True)
+          return (Scoped.Probe e')
       _ -> return e'
 
 scopeCheckBranch

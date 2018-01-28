@@ -3,6 +3,7 @@ module Syntax.Concrete.Scoped
   ( module Definition
   , module Pattern
   , Expr(..), Type
+  , ProbePos(..)
   , piView
   , apps, appsView
   , pattern Pi1
@@ -39,6 +40,12 @@ data Expr v
   | Wildcard
   | Probe (Expr v)
   | SourceLoc !SourceLoc (Expr v)
+
+data ProbePos = ProbePos
+  { probeLine :: Int
+  , probeCol :: Int
+  , probeFile :: FilePath
+  }
 
 -- | Synonym for documentation purposes
 type Type = Expr
@@ -179,6 +186,7 @@ instance v ~ Doc => Pretty (Expr v) where
     ExternCode c -> prettyM c
     Wildcard -> "_"
     SourceLoc _ e -> prettyM e
+    Probe e -> prettyApp "probe" (prettyM e)
     where
       prettyBranch (pat, br) = withNameHints (nameHints pat) $ \ns -> do
         let inst = instantiatePattern (pure . fromName) ns

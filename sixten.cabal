@@ -1,7 +1,7 @@
 name:                sixten
 version:             0.1.0.0
--- synopsis:            
--- description:         
+-- synopsis:
+-- description:
 license:             BSD3
 license-file:        LICENSE
 author:              Olle Fredriksson
@@ -9,7 +9,7 @@ maintainer:          fredriksson.olle@gmail.com
 copyright:           (c) 2014-2017 Olle Fredriksson
 category:            Language
 build-type:          Simple
--- extra-source-files:  
+-- extra-source-files:
 cabal-version:       >=1.10
 data-files:
                      rts/forwarddecls.ll
@@ -41,6 +41,7 @@ executable sixten
                        Command.Compile.Options
                        Command.Run
                        Command.Test
+                       Command.LanguageServer
                        Error
                        FreeVar
                        Frontend.Declassify
@@ -131,6 +132,11 @@ executable sixten
                        transformers-base,
                        unordered-containers,
                        vector,
+                       haskell-lsp >=0.2 && < 1.0,
+                       stm,
+                       data-default,
+                       aeson,
+                       yi-rope,
                        void
   hs-source-dirs:      src
   default-language:    Haskell2010

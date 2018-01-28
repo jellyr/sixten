@@ -53,13 +53,13 @@ runScopeCheck m env = (a, s)
 -- TODO split into several functions
 -- TODO use plain Name for unresolved names
 scopeCheckModule
-  :: Maybe ProbePos
-  -> Module (HashMap QName (SourceLoc, Unscoped.TopLevelDefinition))
+  :: Module (HashMap QName (SourceLoc, Unscoped.TopLevelDefinition))
   -> VIX [[(QName, SourceLoc, Scoped.TopLevelPatDefinition Scoped.Expr void, Maybe (Scoped.Type void))]]
-scopeCheckModule probePos modul = do
+scopeCheckModule modul = do
   otherNames <- liftVIX $ gets vixModuleNames
+  probe <- liftVIX $ gets vixProbePos
 
-  let env = ScopeEnv lookupConstr probePos
+  let env = ScopeEnv lookupConstr probe
       lookupConstr c = MultiHashMap.lookup c constrs
       constrs = MultiHashMap.fromList
         [ (QName mempty $ fromConstr c, QConstr n c)

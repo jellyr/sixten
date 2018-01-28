@@ -33,6 +33,8 @@ import TypeRep
 import Util.MultiHashMap(MultiHashMap)
 import qualified Util.MultiHashMap as MultiHashMap
 
+import Syntax.Concrete.Scoped (ProbePos(..))
+
 data VIXState = VIXState
   { vixLocation :: Maybe SourceLoc
   , vixContext :: HashMap QName (Definition Expr Void, Type Void)
@@ -46,6 +48,7 @@ data VIXState = VIXState
   , vixLogHandle :: !Handle
   , vixVerbosity :: !Int
   , vixTarget :: Target
+  , vixProbePos :: Maybe ProbePos
   }
 
 class Monad m => MonadVIX m where
@@ -71,6 +74,7 @@ emptyVIXState target handle verbosity = VIXState
   , vixLogHandle = handle
   , vixVerbosity = verbosity
   , vixTarget = target
+  , vixProbePos = Nothing
   }
 
 newtype VIX a = VIX (StateT VIXState (ExceptT Error IO) a)

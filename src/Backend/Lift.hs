@@ -12,7 +12,7 @@ import Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import Data.Void
 
-import Fresh
+import MonadFresh
 import Syntax
 import Syntax.Sized.Anno
 import qualified Syntax.Sized.Definition as Sized

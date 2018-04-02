@@ -20,6 +20,7 @@ import Inference.Meta
 import Inference.Monad
 import Inference.Subtype
 import Inference.TypeOf
+import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import Syntax.Abstract.Pattern as Abstract
@@ -64,7 +65,7 @@ tcPats pats vs tele = do
             | otherwise = snd $ Vector.last prefix
         expectedType = instantiateTele id argExprs s
         (p, pat) = pats Vector.! i
-    (pat', patExpr, vs'') <- checkPat p pat vs' expectedType
+    (pat', patExpr, vs'') <- withVars vs' $ checkPat p pat vs' expectedType
     return ((pat', patExpr, expectedType), vs'')
 
   let vs' | Vector.null results = vs

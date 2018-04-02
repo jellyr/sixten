@@ -14,7 +14,7 @@ import Data.Void
 
 import Backend.Target(Target)
 import Builtin.Names
-import Fresh
+import MonadFresh
 import Syntax
 import Syntax.Abstract as Abstract
 import Syntax.Sized.Anno

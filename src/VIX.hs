@@ -26,7 +26,7 @@ import System.IO
 
 import Backend.Target as Target
 import Error
-import Fresh
+import MonadFresh
 import Processor.Result
 import Syntax
 import Syntax.Abstract

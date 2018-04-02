@@ -2,7 +2,6 @@
 module Inference.Constraint where
 
 import Control.Monad.Except
-import Control.Monad.Reader
 import Control.Monad.State
 import Data.Bifunctor
 import Data.Foldable
@@ -21,6 +20,7 @@ import Inference.Meta
 import Inference.Monad
 import qualified Inference.Normalise as Normalise
 import Inference.Subtype
+import MonadContext
 import Syntax
 import Syntax.Abstract
 import Util
@@ -32,19 +32,6 @@ isConstraintVar v = case metaData v of
   Implicit -> False
   Explicit -> False
 
-withVar
-  :: MetaA
-  -> Infer a
-  -> Infer a
-withVar v = local $ \env ->
-  env { localVariables = v : localVariables env }
-
-withVars
-  :: Vector MetaA
-  -> Infer a
-  -> Infer a
-withVars xs b = foldr withVar b xs
-
 elabUnsolvedConstraint
   :: (AbstractM -> Infer AbstractM)
   -> AbstractM
@@ -55,11 +42,11 @@ elabUnsolvedConstraint mkConstraint typ = case typ of
     (uniType, uniVarMap) <- universalise typ
     -- Try subsumption on all instances of the class until a match is found
     globalClassInstances <- liftVIX $ gets $ HashMap.lookupDefault mempty className . vixClassInstances
-    localVars <- asks localVariables
+    locals <- localVars
     let candidates = [(Global g, vacuous t) | (g, t) <- globalClassInstances]
           -- TODO universalise types
-          <> [(pure v, metaType v) | v <- localVars, isConstraintVar v]
-    matchingInstances <- forM candidates $ \(inst, instType) -> tryMaybe $ do
+          <> [(pure v, metaType v) | v <- toList locals, isConstraintVar v]
+    matchingInstances <- withVars (HashMap.keys uniVarMap) $ forM candidates $ \(inst, instType) -> tryMaybe $ do
       f <- subtype instType uniType
       f inst
     case catMaybes matchingInstances of
@@ -85,7 +72,7 @@ universalise typ = second snd <$> runStateT (bindM go typ) mempty
       (ltr, rtl) <- get
       case HashMap.lookup v ltr of
         Nothing -> do
-          v' <- lift $ forall (metaHint v) (metaData v) (metaType v)
+          v' <- forall (metaHint v) (metaData v) (metaType v)
           put (HashMap.insert v v' ltr, HashMap.insert v' v rtl)
           return $ pure v'
         Just v' -> return $ pure v'
@@ -163,11 +150,11 @@ elabLet mkConstraint ds scope = do
   let abstr = letAbstraction vs
   ds' <- iforMLet ds $ \i h s _ -> do
     let e = instantiateLet pure vs s
-    e' <- elabExpr mkConstraint e
+    e' <- withVars vs $ elabExpr mkConstraint e
     s' <- abstractM abstr e'
     return $ LetBinding h s' $ metaType $ vs Vector.! i
   let expr = instantiateLet pure vs scope
-  expr' <- elabExpr mkConstraint expr
+  expr' <- withVars vs $ elabExpr mkConstraint expr
   scope' <- abstractM abstr expr'
   return $ Let (LetRec ds') scope'
 

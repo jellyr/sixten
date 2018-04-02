@@ -4,7 +4,7 @@ module FreeVar where
 import Data.Function
 import Data.Hashable
 
-import Fresh
+import MonadFresh
 import Syntax.NameHint
 
 data FreeVar d = FreeVar

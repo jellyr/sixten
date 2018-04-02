@@ -24,6 +24,7 @@ import Inference.Monad
 import Inference.TypeCheck.Clause
 import Inference.TypeCheck.Data
 import Inference.Unify
+import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
@@ -197,66 +198,60 @@ checkRecursiveDefs
       )
     )
 checkRecursiveDefs forceGeneralisation defs = do
-  let localInstances
-        = flip Vector.mapMaybe defs
-        $ \(v, (_, def, _)) -> case def of
-          Concrete.TopLevelPatDefinition (Concrete.PatDefinition _ IsInstance _) -> Just v { metaData = Constraint }
-          _ -> Nothing
-  withVars localInstances $ do
-    -- Divide the definitions into ones with and without type signature.
-    let (noSigDefs, sigDefs) = divide defs
+  -- Divide the definitions into ones with and without type signature.
+  let (noSigDefs, sigDefs) = divide defs
 
-    -- Assume that the specified type signatures are correct.
-    sigDefs' <- forM sigDefs $ \(evar, (loc, def, typ)) -> do
-      typ' <- checkPoly typ Builtin.Type
-      unify [] (metaType evar) typ'
-      return (evar, (loc, def))
+  -- Assume that the specified type signatures are correct.
+  sigDefs' <- forM sigDefs $ \(evar, (loc, def, typ)) -> do
+    typ' <- checkPoly typ Builtin.Type
+    unify [] (metaType evar) typ'
+    return (evar, (loc, def))
 
-    -- The definitions without type signature are checked and generalised,
-    -- assuming the type signatures of the others.
-    noSigResult <- checkAndElabDefs noSigDefs
+  -- The definitions without type signature are checked and generalised,
+  -- assuming the type signatures of the others.
+  noSigResult <- checkAndElabDefs noSigDefs
 
-    result <- if forceGeneralisation || shouldGeneralise defs then do
+  result <- if forceGeneralisation || shouldGeneralise defs then do
 
-      -- Generalise the definitions without signature
-      (genNoSigResult, noSigSub) <- generaliseDefs GeneraliseAll noSigResult
+    -- Generalise the definitions without signature
+    (genNoSigResult, noSigSub) <- generaliseDefs GeneraliseAll noSigResult
 
-      subbedSigDefs <- forM sigDefs' $ \(v, (loc, def)) -> do
-        let def' = def >>>= pure . noSigSub
-        return (v, (loc, def'))
+    subbedSigDefs <- forM sigDefs' $ \(v, (loc, def)) -> do
+      let def' = def >>>= pure . noSigSub
+      return (v, (loc, def'))
 
-      sigResult <- checkAndElabDefs subbedSigDefs
+    sigResult <- checkAndElabDefs subbedSigDefs
 
-      -- Generalise the definitions with signature
-      if Vector.null sigResult then
-          -- No need to generalise again if there are actually no definitions
-          -- with signatures
-          return genNoSigResult
-        else do
-          (genResult, _) <- generaliseDefs GeneraliseType $ genNoSigResult <> sigResult
-          return genResult
-    else do
-      sigResult <- checkAndElabDefs sigDefs'
-      return $ noSigResult <> sigResult
+    -- Generalise the definitions with signature
+    if Vector.null sigResult then
+        -- No need to generalise again if there are actually no definitions
+        -- with signatures
+        return genNoSigResult
+      else do
+        (genResult, _) <- generaliseDefs GeneraliseType $ genNoSigResult <> sigResult
+        return genResult
+  else do
+    sigResult <- checkAndElabDefs sigDefs'
+    return $ noSigResult <> sigResult
 
-    let locs = (\(_, (loc, _)) -> loc) <$> noSigDefs
-          <|> (\(_, (loc, _)) -> loc) <$> sigDefs'
+  let locs = (\(_, (loc, _)) -> loc) <$> noSigDefs
+        <|> (\(_, (loc, _)) -> loc) <$> sigDefs'
 
-    unless (Vector.length locs == Vector.length result) $
-      internalError $ "checkRecursiveDefs unmatched length" PP.<+> shower (Vector.length locs) PP.<+> shower (Vector.length result)
+  unless (Vector.length locs == Vector.length result) $
+    internalError $ "checkRecursiveDefs unmatched length" PP.<+> shower (Vector.length locs) PP.<+> shower (Vector.length result)
 
-    let locResult = Vector.zip locs result
+  let locResult = Vector.zip locs result
 
-    detectTypeRepCycles locResult
-    detectDefCycles locResult
+  detectTypeRepCycles locResult
+  detectDefCycles locResult
 
-    let permutation = Vector.zip (fst <$> defs) (fst <$> noSigDefs <|> fst <$> sigDefs)
-    return $ unpermute permutation result
-    where
-      divide = bimap Vector.fromList Vector.fromList . foldMap go
-        where
-          go (v, (loc, def, Nothing)) = ([(v, (loc, def))], [])
-          go (v, (loc, def, Just t)) = ([], [(v, (loc, def, t))])
+  let permutation = Vector.zip (fst <$> defs) (fst <$> noSigDefs <|> fst <$> sigDefs)
+  return $ unpermute permutation result
+  where
+    divide = bimap Vector.fromList Vector.fromList . foldMap go
+      where
+        go (v, (loc, def, Nothing)) = ([(v, (loc, def))], [])
+        go (v, (loc, def, Just t)) = ([], [(v, (loc, def, t))])
 
 checkAndElabDefs
   :: Vector
@@ -337,7 +332,7 @@ checkTopLevelRecursiveDefs defs = do
     let exposedDefs = flip fmap defs $ \(_, loc, def, mtyp) ->
           (loc, gbound expose $ vacuous def, gbind expose . vacuous <$> mtyp)
 
-    checkRecursiveDefs True (Vector.zip evars exposedDefs)
+    withVars evars $ checkRecursiveDefs True (Vector.zip evars exposedDefs)
 
   let evars' = (\(v, _, _) -> v) <$> checkedDefs
 

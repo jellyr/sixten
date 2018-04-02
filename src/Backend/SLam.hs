@@ -1,4 +1,4 @@
-{-# LANGUAGE MonadComprehensions, OverloadedStrings, ViewPatterns #-}
+{-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving, MonadComprehensions, MultiParamTypeClasses, OverloadedStrings, TypeSynonymInstances, ViewPatterns #-}
 module Backend.SLam where
 
 import Bound.Scope hiding (instantiate1)
@@ -11,6 +11,8 @@ import qualified Builtin.Names as Builtin
 import Inference.Meta
 import Inference.Normalise
 import Inference.TypeOf
+import MonadContext
+import MonadFresh
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import Syntax.Sized.Anno
@@ -18,10 +20,18 @@ import qualified Syntax.Sized.SLambda as SLambda
 import Util
 import VIX
 
-slamAnno :: AbstractM -> VIX (Anno SLambda.Expr MetaA)
+newtype SLam a = SLam { runSlam :: VIX a }
+  deriving (Functor, Applicative, Monad, MonadFix, MonadIO, MonadVIX, MonadFresh, MonadError Error)
+
+-- | Dummy instance, since we don't use the context
+instance MonadContext MetaA SLam where
+  localVars = return mempty
+  withVar _ m = m
+
+slamAnno :: AbstractM -> SLam (Anno SLambda.Expr MetaA)
 slamAnno e = Anno <$> slam e <*> (slam =<< whnfExpandingTypeReps =<< typeOf e)
 
-slam :: AbstractM -> VIX LambdaM
+slam :: AbstractM -> SLam LambdaM
 slam expr = do
   logMeta 20 "slam expr" expr
   res <- indentLog $ case expr of
@@ -84,7 +94,7 @@ slam expr = do
 
 slamBranches
   :: Branches Plicitness Abstract.Expr MetaA
-  -> VIX (Branches () SLambda.Expr MetaA)
+  -> SLam (Branches () SLambda.Expr MetaA)
 slamBranches (ConBranches cbrs) = do
   logMeta 20 "slamBranches brs" $ ConBranches cbrs
   cbrs' <- indentLog $ forM cbrs $ \(ConBranch c tele brScope) -> do
@@ -111,7 +121,7 @@ slamBranches (LitBranches lbrs d)
 
 slamExtern
   :: Extern (Abstract.Expr MetaA)
-  -> VIX (Extern (Anno SLambda.Expr MetaA))
+  -> SLam (Extern (Anno SLambda.Expr MetaA))
 slamExtern (Extern lang parts)
   = fmap (Extern lang) $ forM parts $ \part -> case part of
     ExternPart str -> return $ ExternPart str
@@ -121,6 +131,6 @@ slamExtern (Extern lang parts)
 
 slamDef
   :: Definition Abstract.Expr MetaA
-  -> VIX (Anno SLambda.Expr MetaA)
+  -> SLam (Anno SLambda.Expr MetaA)
 slamDef (Definition _ _ e) = slamAnno e
 slamDef (DataDefinition _ e) = slamAnno e

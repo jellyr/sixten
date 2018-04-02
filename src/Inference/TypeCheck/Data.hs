@@ -11,6 +11,7 @@ import Inference.Meta
 import Inference.Monad
 import Inference.TypeOf
 import Inference.Unify
+import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
@@ -27,6 +28,7 @@ checkConstrDef (ConstrDef c typ) = do
   return (ConstrDef c typ', ret, size)
   where
     go :: AbstractM -> Infer ([AbstractM], AbstractM)
+    -- TODO: Check for escaping type variables?
     go (Abstract.Pi h p t s) = do
       v <- forall h p t
       (sizes, ret) <- go $ instantiate1 (pure v) s
@@ -51,36 +53,37 @@ checkDataType name (DataDef cs) typ = do
       constrRetType = Abstract.apps (pure name) $ second pure <$> ps'
       abstr = teleAbstraction vs
 
-  (cs', rets, sizes) <- fmap unzip3 $ forM cs $ \(ConstrDef c t) ->
-    checkConstrDef $ ConstrDef c $ instantiateTele pure vs t
+  withVars vs $ do
+    (cs', rets, sizes) <- fmap unzip3 $ forM cs $ \(ConstrDef c t) ->
+      checkConstrDef $ ConstrDef c $ instantiateTele pure vs t
 
-  mapM_ (unify [] constrRetType) rets
+    mapM_ (unify [] constrRetType) rets
 
-  intRep <- getIntRep
+    intRep <- getIntRep
 
-  let tagRep = case cs of
-        [] -> TypeRep.UnitRep
-        [_] -> TypeRep.UnitRep
-        _ -> intRep
+    let tagRep = case cs of
+          [] -> TypeRep.UnitRep
+          [_] -> TypeRep.UnitRep
+          _ -> intRep
 
-      typeRep
-        = productType (Abstract.MkType tagRep)
-        $ foldl' sumType (Abstract.MkType TypeRep.UnitRep) sizes
+        typeRep
+          = productType (Abstract.MkType tagRep)
+          $ foldl' sumType (Abstract.MkType TypeRep.UnitRep) sizes
 
-  unify [] Builtin.Type =<< typeOfM constrRetType
+    unify [] Builtin.Type =<< typeOfM constrRetType
 
-  abstractedCs <- forM cs' $ \c@(ConstrDef qc e) -> do
-    logMeta 20 ("checkDataType res " ++ show qc) e
-    traverse (abstractM abstr) c
+    abstractedCs <- forM cs' $ \c@(ConstrDef qc e) -> do
+      logMeta 20 ("checkDataType res " ++ show qc) e
+      traverse (abstractM abstr) c
 
-  params <- metaTelescopeM ps'
-  let typ'' = Abstract.pis params $ Scope Builtin.Type
+    params <- metaTelescopeM ps'
+    let typ'' = Abstract.pis params $ Scope Builtin.Type
 
-  typeRep' <- whnfExpandingTypeReps typeRep
-  abstractedTypeRep <- abstractM abstr typeRep'
-  logMeta 20 "checkDataType typeRep" typeRep'
+    typeRep' <- whnfExpandingTypeReps typeRep
+    abstractedTypeRep <- abstractM abstr typeRep'
+    logMeta 20 "checkDataType typeRep" typeRep'
 
-  return (DataDefinition (DataDef abstractedCs) $ Abstract.lams params abstractedTypeRep, typ'')
+    return (DataDefinition (DataDef abstractedCs) $ Abstract.lams params abstractedTypeRep, typ'')
 
 -------------------------------------------------------------------------------
 -- Type helpers

@@ -232,7 +232,7 @@ slamGroup
   :: [(QName, Definition Abstract.Expr Void, Abstract.Expr Void)]
   -> VIX [(QName, Anno SLambda.Expr Void)]
 slamGroup defs = forM defs $ \(x, d, _t) -> do
-  d' <- SLam.slamDef $ vacuous d
+  d' <- SLam.runSlam $ SLam.slamDef $ vacuous d
   d'' <- traverse (internalError . ("slamGroup" PP.<+>) . shower) d'
   return (x, d'')
 

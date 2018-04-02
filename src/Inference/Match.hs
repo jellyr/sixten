@@ -18,6 +18,7 @@ import Inference.Meta
 import Inference.Monad
 import Inference.Normalise
 import Inference.TypeOf
+import MonadContext
 import Syntax
 import Syntax.Abstract
 import Syntax.Abstract.Pattern
@@ -55,7 +56,7 @@ matchSingle
   -> Infer ExprF
 matchSingle expr pat innerExpr retType = do
   failVar <- forall "fail" Explicit retType
-  result <- match failVar retType [expr] [([pat], innerExpr)] innerExpr
+  result <- withVar failVar $ match failVar retType [expr] [([pat], innerExpr)] innerExpr
   return $ substitute failVar (Builtin.Fail retType) result
 
 matchCase
@@ -65,7 +66,7 @@ matchCase
   -> Infer ExprF
 matchCase expr pats retType = do
   failVar <- forall "fail" Explicit retType
-  result <- match failVar retType [expr] (first pure <$> pats) (pure failVar)
+  result <- withVar failVar $ match failVar retType [expr] (first pure <$> pats) (pure failVar)
   return $ substitute failVar (Builtin.Fail retType) result
 
 matchClauses
@@ -75,7 +76,7 @@ matchClauses
   -> Infer ExprF
 matchClauses exprs pats retType = do
   failVar <- forall "fail" Explicit retType
-  result <- match failVar retType exprs pats (pure failVar)
+  result <- withVar failVar $ match failVar retType exprs pats (pure failVar)
   return $ substitute failVar (Builtin.Fail retType) result
 
 type Match
@@ -140,7 +141,7 @@ matchCon expr failVar retType exprs clauses expr0 = do
     (ps, ys) <- conPatArgs c params
 
     let exprs' = (pure <$> Vector.toList ys) ++ exprs
-    rest <- match failVar retType exprs' (decon clausesStartingWithC) (pure failVar)
+    rest <- withVars ys $ match failVar retType exprs' (decon clausesStartingWithC) (pure failVar)
     restScope <- abstractM (teleAbstraction ys) rest
     tele <- patternTelescope ys ps
     return $ ConBranch c tele restScope

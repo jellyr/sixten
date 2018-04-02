@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, MonadComprehensions, ViewPatterns, RecursiveDo #-}
+{-# LANGUAGE ConstraintKinds, FlexibleContexts, MonadComprehensions, ViewPatterns, RecursiveDo #-}
 module Inference.Normalise where
 
 import Control.Monad.Except
@@ -7,6 +7,7 @@ import qualified Data.Vector as Vector
 
 import qualified Builtin.Names as Builtin
 import Inference.Meta
+import MonadContext
 import Syntax
 import Syntax.Abstract
 import TypeRep(TypeRep)
@@ -14,10 +15,12 @@ import qualified TypeRep
 import Util
 import VIX
 
+type MonadNormalise m = (MonadIO m, MonadVIX m, MonadContext MetaA m, MonadError Error m, MonadFix m)
+
 -------------------------------------------------------------------------------
 -- * Weak head normal forms
 whnf
-  :: (MonadIO m, MonadVIX m, MonadError Error m, MonadFix m)
+  :: MonadNormalise m
   => AbstractM
   -> m AbstractM
 whnf = whnf' WhnfArgs
@@ -26,7 +29,7 @@ whnf = whnf' WhnfArgs
   }
 
 whnfExpandingTypeReps
-  :: (MonadIO m, MonadVIX m, MonadError Error m, MonadFix m)
+  :: MonadNormalise m
   => AbstractM
   -> m AbstractM
 whnfExpandingTypeReps = whnf' WhnfArgs
@@ -44,7 +47,7 @@ data WhnfArgs m = WhnfArgs
   }
 
 whnf'
-  :: (MonadIO m, MonadVIX m, MonadError Error m, MonadFix m)
+  :: MonadNormalise m
   => WhnfArgs m
   -> AbstractM
   -> m AbstractM
@@ -81,7 +84,7 @@ whnf' args expr = indentLog $ do
           expr' -> return expr'
 
 whnfInner
-  :: (MonadIO m, MonadVIX m, MonadError Error m, MonadFix m)
+  :: MonadNormalise m
   => WhnfArgs m
   -> AbstractM
   -> m AbstractM
@@ -111,7 +114,7 @@ whnfInner args expr = case expr of
     <*> whnf' args retType
 
 normalise
-  :: (MonadIO m, MonadVIX m, MonadError Error m, MonadFix m)
+  :: MonadNormalise m
   => AbstractM
   -> m AbstractM
 normalise expr = do
@@ -178,7 +181,7 @@ normalise expr = do
 
       let vs = snd <$> pvs
           abstr = teleAbstraction vs
-      e' <- normalise $ instantiateTele pure vs scope
+      e' <- withVars vs $ normalise $ instantiateTele pure vs scope
       scope' <- abstractM abstr e'
       tele' <- forM pvs $ \(p, v) -> do
         s <- abstractM abstr $ metaType v
@@ -187,7 +190,7 @@ normalise expr = do
     normaliseScope h p c t s = do
       t' <- normalise t
       x <- forall h p t'
-      ns <- normalise $ Util.instantiate1 (pure x) s
+      ns <- withVar x $ normalise $ Util.instantiate1 (pure x) s
       c t' <$> abstract1M x ns
 
 binOp

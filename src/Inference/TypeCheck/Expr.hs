@@ -20,6 +20,7 @@ import Inference.TypeCheck.Definition
 import Inference.TypeCheck.Pattern
 import Inference.TypeOf
 import Inference.Unify
+import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
@@ -53,10 +54,10 @@ checkPoly' (Concrete.SourceLoc loc e) polyType
   = located loc $ checkPoly' e polyType
 checkPoly' expr@(Concrete.Lam Implicit _ _) polyType
   = checkRho expr polyType
-checkPoly' expr polyType = do
-  (rhoType, f) <- skolemise polyType $ instUntilExpr expr
-  e <- checkRho expr rhoType
-  f e
+checkPoly' expr polyType
+  = skolemise polyType (instUntilExpr expr) $ \rhoType f -> do
+    e <- checkRho expr rhoType
+    f e
 
 instantiateForalls
   :: Polytype
@@ -125,36 +126,39 @@ tcRho expr expected expectedAppResult = case expr of
     f $ Abstract.Con qc
   Concrete.Pi p pat bodyScope -> do
     (pat', _, vs, patType) <- inferPat p pat mempty
-    let body = instantiatePattern pure vs bodyScope
-        h = Concrete.patternHint pat
-    body' <- enterLevel $ checkPoly body Builtin.Type
-    f <- instExpected expected Builtin.Type
-    x <- forall h p patType
-    body'' <- matchSingle (pure x) pat' body' Builtin.Type
-    f =<< Abstract.Pi h p patType <$> abstract1M x body''
+    withVars vs $ do
+      let body = instantiatePattern pure vs bodyScope
+          h = Concrete.patternHint pat
+      body' <- enterLevel $ checkPoly body Builtin.Type
+      f <- instExpected expected Builtin.Type
+      x <- forall h p patType
+      body'' <- withVar x $ matchSingle (pure x) pat' body' Builtin.Type
+      f =<< Abstract.Pi h p patType <$> abstract1M x body''
   Concrete.Lam p pat bodyScope -> do
     let h = Concrete.patternHint pat
     case expected of
       Infer {} -> do
         (pat', _, vs, argType) <- inferPat p pat mempty
-        let body = instantiatePattern pure vs bodyScope
-        (body', bodyType) <- enterLevel $ inferRho body (InstUntil Explicit) Nothing
-        argVar <- forall h p argType
-        body'' <- matchSingle (pure argVar) pat' body' bodyType
-        bodyScope' <- abstract1M argVar body''
-        bodyTypeScope <- abstract1M argVar bodyType
-        f <- instExpected expected $ Abstract.Pi h p argType bodyTypeScope
-        f $ Abstract.Lam h p argType bodyScope'
+        withVars vs $ do
+          let body = instantiatePattern pure vs bodyScope
+          (body', bodyType) <- enterLevel $ inferRho body (InstUntil Explicit) Nothing
+          argVar <- forall h p argType
+          body'' <- withVar argVar $ matchSingle (pure argVar) pat' body' bodyType
+          bodyScope' <- abstract1M argVar body''
+          bodyTypeScope <- abstract1M argVar bodyType
+          f <- instExpected expected $ Abstract.Pi h p argType bodyTypeScope
+          f $ Abstract.Lam h p argType bodyScope'
       Check expectedType -> do
         (typeh, argType, bodyTypeScope, fResult) <- funSubtype expectedType p
         let h' = h <> typeh
         (pat', patExpr, vs) <- checkPat p pat mempty argType
-        let body = instantiatePattern pure vs bodyScope
-            bodyType = Util.instantiate1 patExpr bodyTypeScope
-        body' <- enterLevel $ checkPoly body bodyType
-        argVar <- forall h' p argType
-        body'' <- matchSingle (pure argVar) pat' body' bodyType
-        fResult =<< Abstract.Lam h' p argType <$> abstract1M argVar body''
+        withVars vs $ do
+          let body = instantiatePattern pure vs bodyScope
+              bodyType = Util.instantiate1 patExpr bodyTypeScope
+          body' <- enterLevel $ checkPoly body bodyType
+          argVar <- forall h' p argType
+          body'' <- withVar argVar $ matchSingle (pure argVar) pat' body' bodyType
+          fResult =<< Abstract.Lam h' p argType <$> abstract1M argVar body''
   Concrete.App fun p arg -> do
     (fun', funType) <- inferRho fun (InstUntil p) expectedAppResult
     (argType, resTypeScope, f1) <- subtypeFun funType p
@@ -181,7 +185,7 @@ tcRho expr expected expectedAppResult = case expr of
               , Concrete.TopLevelPatDefinition $ Concrete.instantiateLetClause pure evars <$> def
               , instantiateLet pure evars <$> mtyp
               )) <$> ds
-    ds' <- checkRecursiveDefs False (Vector.zip evars instantiatedDs)
+    ds' <- withVars evars $ checkRecursiveDefs False (Vector.zip evars instantiatedDs)
     let evars' = (\(v, _, _) -> v) <$> ds'
         eabstr = letAbstraction evars'
     ds'' <- LetRec
@@ -195,7 +199,7 @@ tcRho expr expected expectedAppResult = case expr of
           Abstract -> forall h Explicit t
           Concrete -> Meta.let_ h Explicit (inst s) t
       let abstr = letAbstraction vars
-      body <- tcRho (instantiateLet pure vars scope) expected expectedAppResult
+      body <- withVars vars $ tcRho (instantiateLet pure vars scope) expected expectedAppResult
       Abstract.Let ds'' <$> abstractM abstr body
   Concrete.Case e brs -> tcBranches e brs expected expectedAppResult
   Concrete.ExternCode c -> do

@@ -15,6 +15,7 @@ import Inference.Meta
 import Inference.Monad
 import Inference.Normalise
 import Inference.TypeOf
+import MonadContext
 import Pretty
 import Syntax
 import Syntax.Abstract
@@ -107,7 +108,7 @@ unify' cxt type1 type2
     absCase h p t1 t2 s1 s2 = do
       unify cxt t1 t2
       v <- forall h p t1
-      unify cxt (instantiate1 (pure v) s1) (instantiate1 (pure v) s2)
+      withVar v $ unify cxt (instantiate1 (pure v) s1) (instantiate1 (pure v) s2)
     distinctForalls pes = case traverse isForall pes of
       Just pes' | distinct pes' -> Just pes'
       _ -> Nothing

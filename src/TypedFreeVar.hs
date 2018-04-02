@@ -12,7 +12,7 @@ import Data.Monoid
 import Data.String
 import Data.Vector(Vector)
 
-import Fresh
+import MonadFresh
 import Pretty
 import Syntax.Name
 import Syntax.NameHint

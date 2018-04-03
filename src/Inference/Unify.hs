@@ -53,7 +53,6 @@ occurs cxt l tv expr = traverse_ go expr
             , dullBlue printedExpr
             , ""
             , "while trying to unify"
-            , ""
             ] ++ intercalate ["", "while trying to unify"] explanation)
       | otherwise = do
         occurs cxt l tv typ
@@ -65,6 +64,30 @@ occurs cxt l tv expr = traverse_ go expr
             case sol of
               Left l' -> liftST $ writeSTRef r $ Left $ min l l'
               Right typ' -> traverse_ go typ'
+
+prune :: HashSet MetaA -> AbstractM -> Infer ()
+prune allowed expr = case expr of
+  Var _ -> return ()
+  Global _ -> return ()
+  Con _ -> return ()
+  Lit _ -> return ()
+  Pi h p t s -> absCase Pi h p t s
+  Lam h p t s -> absCase Lam h p t s
+  (appsView -> (Var v@MetaVar { metaRef = Exists r }), distinctForalls -> Just pvs) -> do
+    let pvs' = filter (`HashSet.member` allowed) pvs
+    when (pvs' /= pvs) $ do
+      existsAtLevel (nameHint v) (metaData v) (metaType v)
+  App e1 p e2 -> do
+    prune e1
+    prune e2
+  Let ds s -> return () -- TODO
+  Case e brs t -> return () -- TODO
+  ExternCode e t -> return () -- TODO
+  where
+    absCase h p t s = do
+      prune allowed t
+      v <- forall h p t'
+      prune (HashSet.insert v allowed) $ instantiate1 (pure v) s
 
 unify :: [(AbstractM, AbstractM)] -> AbstractM -> AbstractM -> Infer ()
 unify cxt type1 type2 = do
@@ -109,24 +132,27 @@ unify' cxt type1 type2
       unify cxt t1 t2
       v <- forall h p t1
       withVar v $ unify cxt (instantiate1 (pure v) s1) (instantiate1 (pure v) s2)
-    distinctForalls pes = case traverse isForall pes of
-      Just pes' | distinct pes' -> Just pes'
-      _ -> Nothing
-    isForall (p, Var v@MetaVar { metaRef = Forall }) = Just (p, v)
-    isForall (p, Var v@MetaVar { metaRef = LetRef {} }) = Just (p, v)
-    isForall _ = Nothing
-    distinct pes = Set.size (Set.fromList es) == length es where es = map snd pes
     solveVar recurse r v pvs t = do
       let pvs' = Vector.fromList pvs
       sol <- solution r
       case sol of
         Left l -> do
-          occurs cxt l v t
+          t' <- zonk =<< normalise t
+          occurs cxt l v t'
           tele <- metaTelescopeM pvs'
           let abstr = teleAbstraction $ snd <$> pvs'
-          t' <- lams tele <$> abstractM abstr t
+          t' <- lams tele <$> abstractM abstr t'
           t'Type <- fmap (pis tele) $ abstractM abstr =<< typeOfM t
           recurse cxt (metaType v) t'Type
           logMeta 30 ("solving " <> show (metaId v)) t'
           solve r t'
         Right c -> recurse cxt (apps c $ map (second pure) pvs) t
+
+distinctForalls pes = case traverse isForall pes of
+  Just pes' | distinct pes' -> Just pes'
+  _ -> Nothing
+
+isForall (p, Var v@MetaVar { metaRef = Forall }) = Just (p, v)
+isForall (p, Var v@MetaVar { metaRef = LetRef {} }) = Just (p, v)
+isForall _ = Nothing
+distinct pes = HashSet.size (HashSet.fromList es) == length es where es = map snd pes

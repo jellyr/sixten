@@ -24,7 +24,7 @@ import TypedFreeVar
 import qualified TypeRep
 import Util
 
-context :: Target -> HashMap QName (Definition Expr Void, Type Void)
+context :: Target -> HashMap QName (Definition (Expr Void) Void, Type Void Void)
 context target = HashMap.fromList
   [ (TypeName, dataType typeRep Type [])
   , (PtrName, dataType

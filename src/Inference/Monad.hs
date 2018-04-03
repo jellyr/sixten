@@ -1,11 +1,12 @@
-{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, OverloadedStrings, TypeSynonymInstances #-}
 module Inference.Monad where
 
 import Control.Monad.Reader
 import Data.Bifunctor
+import Data.Foldable
 
 import qualified Builtin.Names as Builtin
-import Inference.Meta
+import Inference.MetaVar
 import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
@@ -13,6 +14,11 @@ import Util
 import qualified Util.Tsil as Tsil
 import Util.Tsil(Tsil)
 import VIX
+import TypedFreeVar
+
+type FreeV = FreeVar (Abstract.Expr MetaVar)
+type ConcreteM = Concrete.Expr FreeV
+type AbstractM = Abstract.Expr Meta FreeV
 
 type Polytype = AbstractM
 type Rhotype = AbstractM -- No top-level foralls
@@ -27,7 +33,7 @@ shouldInst p (InstUntil p') | p == p' = False
 shouldInst _ _ = True
 
 data InferEnv = InferEnv
-  { localVariables :: Tsil MetaA
+  { localVariables :: Tsil Meta
   , inferLevel :: !Level
   }
 
@@ -39,11 +45,16 @@ runInfer i = runReaderT i InferEnv
   , inferLevel = 1
   }
 
-instance MonadContext MetaA Infer where
+instance MonadContext Meta Infer where
   localVars = asks localVariables
 
-  withVar v = local $ \env ->
-    env { localVariables = localVariables env `Tsil.Snoc` v }
+  withVar v m = do
+    locals <- localVars
+    when (v `elem` toList locals) $ internalError "Duplicate var in context"
+
+    local
+      (\env -> env { localVariables = localVariables env `Tsil.Snoc` v })
+      m
 
 level :: Infer Level
 level = asks inferLevel

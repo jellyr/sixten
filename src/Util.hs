@@ -5,10 +5,10 @@ import Bound
 import Bound.Var
 import Control.Applicative
 import Control.Exception.Lifted
-import Control.Monad.Trans.Control
 import Control.Monad.Except
 import Control.Monad.ST
 import Control.Monad.State
+import Control.Monad.Trans.Control
 import Data.Bifoldable
 import Data.Bifunctor
 import Data.Bits
@@ -30,6 +30,7 @@ import qualified Data.Vector as Vector
 import qualified Data.Vector.Generic as GVector
 import qualified Data.Vector.Generic.Base as BVector
 import qualified Data.Vector.Generic.Mutable as MVector
+import Data.Void
 import System.IO
 
 type Scope1 = Scope ()
@@ -238,3 +239,6 @@ saturate f = fixPoint $ \s -> HashSet.unions $ s : map f (HashSet.toList s)
 
 withFile :: MonadBaseControl IO m => FilePath -> IOMode -> (Handle -> m r) -> m r
 withFile name mode = liftBaseOp $ bracket (openFile name mode) hClose
+
+bivacuous :: Bifunctor f => f Void Void -> f a b
+bivacuous = bimap absurd absurd

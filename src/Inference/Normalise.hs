@@ -6,7 +6,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Vector as Vector
 
 import qualified Builtin.Names as Builtin
-import Inference.Meta
+import Inference.MetaVar
 import MonadContext
 import Syntax
 import Syntax.Abstract

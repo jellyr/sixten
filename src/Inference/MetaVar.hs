@@ -3,6 +3,7 @@ module Inference.MetaVar where
 
 import Control.Monad.Except
 import Control.Monad.ST
+import Control.Monad.State
 import Data.Bitraversable
 import Data.Function
 import Data.Hashable
@@ -12,9 +13,9 @@ import Data.String
 import qualified Data.Text.Prettyprint.Doc as PP
 import Data.Void
 
-import Syntax.Abstract
 import MonadFresh
 import Syntax
+import Syntax.Abstract
 import Util
 import VIX
 
@@ -103,3 +104,9 @@ prettyMeta
 prettyMeta e = do
   e' <- bitraverse (\m -> WithVar m <$> prettyMetaVar m) (pure . pretty) e
   return $ pretty e'
+
+logMeta v s e = whenVerbose v $ do
+  i <- liftVIX $ gets vixIndent
+  d <- prettyMeta e
+  VIX.log $ mconcat (replicate i "| ") <> "--" <> fromString s <> ": " <> showWide d
+

@@ -7,6 +7,7 @@ import qualified Data.Vector as Vector
 
 import qualified Builtin.Names as Builtin
 import Inference.MetaVar
+import Inference.Monad
 import MonadContext
 import Syntax
 import Syntax.Abstract
@@ -15,7 +16,7 @@ import qualified TypeRep
 import Util
 import VIX
 
-type MonadNormalise m = (MonadIO m, MonadVIX m, MonadContext MetaA m, MonadError Error m, MonadFix m)
+type MonadNormalise m = (MonadIO m, MonadVIX m, MonadContext FreeV m, MonadError Error m, MonadFix m)
 
 -------------------------------------------------------------------------------
 -- * Weak head normal forms
@@ -62,8 +63,9 @@ whnf' args expr = indentLog $ do
       f' <- whnfInner args f
       case f' of
         Lam h p' t s | p == p' -> do
-          eVar <- shared h p e t
-          go (Util.instantiate1 (pure eVar) s) es'
+          -- eVar <- shared h p e t
+          let eVar = e -- TODO
+          go (Util.instantiate1 eVar s) es'
         _ -> case apps f' es of
           Builtin.ProductTypeRep x y -> typeRepBinOp
             (Just TypeRep.UnitRep) (Just TypeRep.UnitRep)
@@ -198,11 +200,11 @@ binOp
   => Maybe Integer
   -> Maybe Integer
   -> (Integer -> Integer -> Integer)
-  -> (Expr v -> Expr v -> Expr v)
-  -> (Expr v -> m (Expr v))
-  -> Expr v
-  -> Expr v
-  -> m (Expr v)
+  -> (Expr meta v -> Expr meta v -> Expr meta v)
+  -> (Expr meta v -> m (Expr meta v))
+  -> Expr meta v
+  -> Expr meta v
+  -> m (Expr meta v)
 binOp lzero rzero op cop norm x y = do
     x' <- norm x
     y' <- norm y
@@ -217,11 +219,11 @@ typeRepBinOp
   => Maybe TypeRep
   -> Maybe TypeRep
   -> (TypeRep -> TypeRep -> TypeRep)
-  -> (Expr v -> Expr v -> Expr v)
-  -> (Expr v -> m (Expr v))
-  -> Expr v
-  -> Expr v
-  -> m (Expr v)
+  -> (Expr meta v -> Expr meta v -> Expr meta v)
+  -> (Expr meta v -> m (Expr meta v))
+  -> Expr meta v
+  -> Expr meta v
+  -> m (Expr meta v)
 typeRepBinOp lzero rzero op cop norm x y = do
     x' <- norm x
     y' <- norm y
@@ -233,11 +235,11 @@ typeRepBinOp lzero rzero op cop norm x y = do
 
 chooseBranch
   :: Monad m
-  => Expr v
-  -> Branches Plicitness Expr v
-  -> Expr v
-  -> (Expr v -> m (Expr v))
-  -> m (Expr v)
+  => Expr meta v
+  -> Branches Plicitness (Expr meta) v
+  -> Expr meta v
+  -> (Expr meta v -> m (Expr meta v))
+  -> m (Expr meta v)
 chooseBranch (Lit l) (LitBranches lbrs def) _ k = k chosenBranch
   where
     chosenBranch = head $ [br | LitBranch l' br <- NonEmpty.toList lbrs, l == l'] ++ [def]
@@ -252,14 +254,14 @@ chooseBranch e brs retType _ = return $ Case e brs retType
 
 instantiateLetM
   :: (MonadFix m, MonadIO m, MonadVIX m)
-  => LetRec Expr MetaA
-  -> Scope LetVar Expr MetaA
+  => LetRec (Expr MetaVar) FreeV
+  -> Scope LetVar (Expr MetaVar) FreeV
   -> m AbstractM
 instantiateLetM ds scope = mdo
   vs <- forMLet ds $ \h s t -> shared h Explicit (instantiateLet pure vs s) t
   return $ instantiateLet pure vs scope
 
-etaReduce :: Expr v -> Maybe (Expr v)
+etaReduce :: Expr meta v -> Maybe (Expr meta v)
 etaReduce (Lam _ p _ (Scope (App e1scope p' (Var (B ())))))
   | p == p', Just e1' <- unusedScope $ Scope e1scope = Just e1'
 etaReduce _ = Nothing

@@ -4,13 +4,17 @@ module Inference.MetaVar where
 import Control.Monad.Except
 import Control.Monad.ST
 import Control.Monad.State
+import Data.Bifoldable
 import Data.Bitraversable
 import Data.Function
 import Data.Hashable
+import qualified Data.HashSet as HashSet
+import Data.HashSet(HashSet)
 import Data.Monoid
 import Data.STRef
 import Data.String
 import qualified Data.Text.Prettyprint.Doc as PP
+import Data.Vector(Vector)
 import Data.Void
 
 import MonadFresh
@@ -56,7 +60,7 @@ existsAtLevel
   -> Plicitness
   -> Expr MetaVar Void
   -> Level
-  -> m MetaVar 
+  -> m MetaVar
 existsAtLevel hint p typ l = do
   i <- fresh
   ref <- liftST $ newSTRef $ Left l
@@ -75,6 +79,18 @@ solve
   -> Expr MetaVar Void
   -> m ()
 solve m x = liftST $ writeSTRef (metaRef m) $ Right x
+
+traverseMeta
+  :: MonadIO m
+  => (Expr MetaVar v -> m (Expr MetaVar v))
+  -> MetaVar
+  -> Vector (Plicitness, Expr MetaVar v)
+  -> m (Expr MetaVar v)
+traverseMeta f m es = do
+  sol <- solution m
+  case sol of
+    Left _ -> return $ Meta m es
+    Right e -> f $ apps (vacuous e) es
 
 data WithVar a = WithVar !MetaVar a
 
@@ -105,8 +121,32 @@ prettyMeta e = do
   e' <- bitraverse (\m -> WithVar m <$> prettyMetaVar m) (pure . pretty) e
   return $ pretty e'
 
+logMeta
+  :: (MonadIO m, Pretty v, MonadVIX m)
+  => Int
+  -> String
+  -> Expr MetaVar v
+  -> m ()
 logMeta v s e = whenVerbose v $ do
   i <- liftVIX $ gets vixIndent
   d <- prettyMeta e
   VIX.log $ mconcat (replicate i "| ") <> "--" <> fromString s <> ": " <> showWide d
 
+zonk :: MonadIO m => Expr MetaVar v -> m (Expr MetaVar v)
+zonk = bindMeta $ \m es -> do
+  sol <- solution m
+  case sol of
+    Left _ -> return $ Meta m es
+    Right e -> return $ apps (vacuous e) es
+
+metaVars :: MonadIO m => Expr MetaVar v -> m (HashSet MetaVar)
+metaVars expr = execStateT (bitraverse_ go (const $ pure ()) expr) mempty
+  where
+    go m = do
+      visited <- get
+      unless (m `HashSet.member` visited) $ do
+        bitraverse_ go (const $ pure ()) $ metaType m
+        sol <- solution m
+        case sol of
+          Left _ -> return ()
+          Right e -> bitraverse_ go (const $ pure ()) e

@@ -10,6 +10,7 @@ import Data.Monoid
 import qualified Data.MultiSet as MultiSet
 import qualified Data.Set as Set
 import qualified Data.Vector as Vector
+import Data.Void
 
 import Inference.Normalise
 import Syntax
@@ -19,10 +20,11 @@ import Util
 simplifyExpr
   :: (QName -> Bool)
   -> Int
-  -> Expr v
-  -> Expr v
+  -> Expr Void v
+  -> Expr Void v
 simplifyExpr glob !applied expr = case expr of
   Var _ -> expr
+  Meta v _ -> absurd v
   Global _ -> expr
   Con _ -> expr
   Lit _ -> expr
@@ -55,9 +57,9 @@ simplifyExpr glob !applied expr = case expr of
 -- TODO: Inlining can expose more simplification opportunities that aren't exploited.
 letRec
   :: (QName -> Bool)
-  -> LetRec Expr v
-  -> Scope LetVar Expr v
-  -> Expr v
+  -> LetRec (Expr meta) v
+  -> Scope LetVar (Expr meta) v
+  -> Expr meta v
 letRec glob ds scope
   | Vector.null ds' = instantiate (error "letRec empty") scope'
   | otherwise = Let (LetRec ds') scope'
@@ -81,10 +83,10 @@ letRec glob ds scope
 let_
   :: (QName -> Bool)
   -> NameHint
-  -> Expr v
-  -> Type v
-  -> Scope1 Expr v
-  -> Expr v
+  -> Expr meta v
+  -> Type meta v
+  -> Scope1 (Expr meta) v
+  -> Expr meta v
 let_ glob h e t s
   = letRec
     glob
@@ -93,16 +95,16 @@ let_ glob h e t s
 
 simplifyDef
   :: (QName -> Bool)
-  -> Definition Expr v
-  -> Definition Expr v
+  -> Definition (Expr Void) v
+  -> Definition (Expr Void) v
 simplifyDef glob = hoist $ simplifyExpr glob 0
 
 etaLams
   :: (QName -> Bool)
   -> Int
-  -> Telescope Plicitness Expr v
-  -> Scope TeleVar Expr v
-  -> Expr v
+  -> Telescope Plicitness (Expr Void) v
+  -> Scope TeleVar (Expr Void) v
+  -> Expr Void v
 etaLams glob applied tele scope = case go 0 $ fromScope scope of
   Nothing -> lams tele scope
   Just (i, expr) -> lams (takeTele (len - i) tele) $ toScope expr
@@ -123,21 +125,22 @@ etaLams glob applied tele scope = case go 0 $ fromScope scope of
     len = teleLength tele
     as = teleAnnotations tele
 
-betaApp ::  Expr v -> Plicitness -> Expr v -> Expr v
+betaApp ::  Expr Void v -> Plicitness -> Expr Void v -> Expr Void v
 betaApp (Lam h a1 t s) a2 e2 | a1 == a2 = let_ (const True) h e2 t s
 betaApp e1 a e2 = App e1 a e2
 
 betaApps
   :: Foldable t
-  => Expr v
-  -> t (Plicitness, Expr v)
-  -> Expr v
+  => Expr Void v
+  -> t (Plicitness, Expr Void v)
+  -> Expr Void v
 betaApps = Foldable.foldl (uncurry . betaApp)
 
 -- | Is it cost-free to duplicate this expression?
-duplicable :: Expr v -> Bool
+duplicable :: Expr meta v -> Bool
 duplicable expr = case expr of
   Var _ -> True
+  Meta _ _ -> False
   Global _ -> True
   Con _ -> True
   Lit _ -> True
@@ -148,9 +151,10 @@ duplicable expr = case expr of
   Let {} -> False
   ExternCode {} -> False
 
-terminates :: (QName -> Bool) -> Expr v -> Bool
+terminates :: (QName -> Bool) -> Expr meta v -> Bool
 terminates glob expr = case expr of
   Var _ -> True
+  Meta _ _ -> False
   Global n -> glob n
   Con _ -> True
   Lit _ -> True
@@ -161,9 +165,10 @@ terminates glob expr = case expr of
   Let ds s -> all (terminates glob) (fromScope <$> letBodies ds) && terminates glob (fromScope s)
   ExternCode {} -> False
 
-terminatesWhenCalled :: (QName -> Bool) -> Expr v -> Bool
+terminatesWhenCalled :: (QName -> Bool) -> Expr meta v -> Bool
 terminatesWhenCalled glob expr = case expr of
   Var _ -> False
+  Meta _ _ -> False
   Global _ -> False
   Con _ -> True
   Lit _ -> True

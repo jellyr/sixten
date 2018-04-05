@@ -14,7 +14,7 @@ import Data.Vector(Vector)
 
 import qualified Analysis.Simplify as Simplify
 import qualified Builtin.Names as Builtin
-import Inference.Meta
+import Inference.MetaVar
 import Inference.Monad
 import Inference.Normalise
 import Inference.TypeOf
@@ -22,10 +22,11 @@ import MonadContext
 import Syntax
 import Syntax.Abstract
 import Syntax.Abstract.Pattern
+import TypedFreeVar
 import Util
 import VIX
 
-type PatM = Pat AbstractM MetaA
+type PatM = Pat AbstractM FreeV
 -- | An expression possibly containing a pattern-match failure variable
 type ExprF = AbstractM
 type Clause =
@@ -33,7 +34,7 @@ type Clause =
   , ExprF
   )
 
-fatBar :: MetaA -> AbstractM -> AbstractM -> AbstractM
+fatBar :: FreeV -> AbstractM -> AbstractM -> AbstractM
 fatBar failVar e e' = case filter (== failVar) $ toList e of
   _ | Simplify.duplicable e' -> dup
   [] -> e
@@ -42,7 +43,7 @@ fatBar failVar e e' = case filter (== failVar) $ toList e of
     (const False)
     mempty
     (Lam mempty Explicit Builtin.UnitType $ abstractNone e')
-    (Pi mempty Explicit Builtin.UnitType $ abstractNone $ metaType failVar)
+    (Pi mempty Explicit Builtin.UnitType $ abstractNone $ varType failVar)
     $ abstract1 failVar
     $ substitute failVar (App (pure failVar) Explicit Builtin.MkUnit) e
   where
@@ -55,7 +56,7 @@ matchSingle
   -> AbstractM
   -> Infer ExprF
 matchSingle expr pat innerExpr retType = do
-  failVar <- forall "fail" Explicit retType
+  failVar <- freeVar "fail" Explicit retType
   result <- withVar failVar $ match failVar retType [expr] [([pat], innerExpr)] innerExpr
   return $ substitute failVar (Builtin.Fail retType) result
 
@@ -65,7 +66,7 @@ matchCase
   -> AbstractM
   -> Infer ExprF
 matchCase expr pats retType = do
-  failVar <- forall "fail" Explicit retType
+  failVar <- freeVar "fail" Explicit retType
   result <- withVar failVar $ match failVar retType [expr] (first pure <$> pats) (pure failVar)
   return $ substitute failVar (Builtin.Fail retType) result
 
@@ -75,12 +76,12 @@ matchClauses
   -> AbstractM
   -> Infer ExprF
 matchClauses exprs pats retType = do
-  failVar <- forall "fail" Explicit retType
+  failVar <- freeVar "fail" Explicit retType
   result <- withVar failVar $ match failVar retType exprs pats (pure failVar)
   return $ substitute failVar (Builtin.Fail retType) result
 
 type Match
-  = MetaA -- ^ Failure variable
+  = FreeV -- ^ Failure variable
   -> ExprF -- ^ Return type
   -> [AbstractM] -- ^ Expressions to case on corresponding to the patterns in the clauses (usually variables)
   -> [Clause] -- ^ Clauses
@@ -88,7 +89,7 @@ type Match
   -> Infer ExprF
 
 type NonEmptyMatch
-  = MetaA -- ^ Failure variable
+  = FreeV -- ^ Failure variable
   -> ExprF -- ^ Return type
   -> [AbstractM] -- ^ Expressions to case on corresponding to the patterns in the clauses (usually variables)
   -> NonEmpty Clause -- ^ Clauses
@@ -134,7 +135,7 @@ matchCon expr failVar retType exprs clauses expr0 = do
     params <- case clausesStartingWithC of
       firstClause:_ -> return $ typeParams $ firstPattern firstClause
       [] -> do
-        typ <- typeOfM expr
+        typ <- typeOf expr
         typ' <- whnf typ
         let (_, params) = appsView typ'
         return $ Vector.fromList params
@@ -142,7 +143,7 @@ matchCon expr failVar retType exprs clauses expr0 = do
 
     let exprs' = (pure <$> Vector.toList ys) ++ exprs
     rest <- withVars ys $ match failVar retType exprs' (decon clausesStartingWithC) (pure failVar)
-    restScope <- abstractM (teleAbstraction ys) rest
+    let restScope = abstract (teleAbstraction ys) rest
     tele <- patternTelescope ys ps
     return $ ConBranch c tele restScope
 
@@ -161,25 +162,26 @@ matchCon expr failVar retType exprs clauses expr0 = do
 conPatArgs
   :: QConstr
   -> Vector (Plicitness, AbstractM)
-  -> Infer (Vector (Plicitness, PatM, AbstractM), Vector MetaA)
+  -> Infer (Vector (Plicitness, PatM, AbstractM), Vector FreeV)
 conPatArgs c params = do
   ctype <- qconstructor c
   let (tele, _) = pisView (ctype :: AbstractM)
       tele' = instantiatePrefix (snd <$> params) tele
   vs <- forTeleWithPrefixM tele' $ \h p s vs ->
-    forall h p $ instantiateTele pure vs s
-  let ps = (\(p, v) -> (p, VarPat (metaHint v) v, metaType v))
+    freeVar h p $ instantiateTele pure vs s
+  let ps = (\(p, v) -> (p, VarPat (varHint v) v, varType v))
         <$> Vector.zip (teleAnnotations tele') vs
   return (ps, vs)
 
 patternTelescope
-  :: Vector MetaA
+  :: Vector FreeV
   -> Vector (a, Pat typ b, AbstractM)
-  -> Infer (Telescope a Expr MetaA)
+  -> Infer (Telescope a (Expr MetaVar) FreeV)
 patternTelescope ys ps = Telescope <$> mapM go ps
   where
     go (p, pat, e) = do
-      s <- abstractM (teleAbstraction ys) e
+      -- TODO purify
+      let s = abstract (teleAbstraction ys) e
       return $ TeleArg (patternHint pat) p s
 
 matchLit :: AbstractM -> NonEmptyMatch

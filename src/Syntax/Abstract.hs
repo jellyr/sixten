@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFoldable, DeriveFunctor, DeriveTraversable, FlexibleContexts, OverloadedStrings, PatternSynonyms, TemplateHaskell, TypeFamilies, ViewPatterns #-}
+{-# LANGUAGE DeriveFoldable, DeriveFunctor, DeriveTraversable, FlexibleContexts, OverloadedStrings, PatternSynonyms, RankNTypes, TemplateHaskell, TypeFamilies, ViewPatterns #-}
 module Syntax.Abstract where
 
 import Control.Monad
@@ -18,7 +18,7 @@ import Util.Tsil
 -- | Expressions with meta-variables of type @m@ and variables of type @v@.
 data Expr m v
   = Var v
-  | Meta m (Vector (Expr m v))
+  | Meta m (Vector (Plicitness, Expr m v))
   | Global QName
   | Con QConstr
   | Lit Literal
@@ -58,12 +58,12 @@ lamView :: Expr m v -> Maybe (NameHint, Plicitness, Type m v, Scope1 (Expr m) v)
 lamView (Lam h a t s) = Just (h, a, t, s)
 lamView _ = Nothing
 
-typeApp :: Expr m v -> Expr m v -> Maybe (Expr m v)
-typeApp (Pi _ _ _ s) e = Just $ Util.instantiate1 e s
-typeApp _ _ = Nothing
+typeApp :: Expr m v -> Plicitness -> Expr m v -> Maybe (Expr m v)
+typeApp (Pi _ p _ s) p' e | p == p' = Just $ Util.instantiate1 e s
+typeApp _ _ _ = Nothing
 
-typeApps :: Foldable t => Expr m v -> t (Expr m v) -> Maybe (Expr m v)
-typeApps = foldlM typeApp
+typeApps :: Foldable t => Expr m v -> t (Plicitness, Expr m v) -> Maybe (Expr m v)
+typeApps = foldlM (\e (p, e') -> typeApp e p e')
 
 usedPiView
   :: Expr m v
@@ -127,7 +127,7 @@ instance Monad (Expr m) where
   return = Var
   expr >>= f = case expr of
     Var v -> f v
-    Meta m vs -> Meta m $ (>>= f) <$> vs
+    Meta m vs -> Meta m $ second (>>= f) <$> vs
     Global v -> Global v
     Con c -> Con c
     Lit l -> Lit l
@@ -142,7 +142,7 @@ instance GBind (Expr m) where
   global = Global
   gbind f expr = case expr of
     Var _ -> expr
-    Meta m es -> Meta m (gbind f <$> es)
+    Meta m es -> Meta m (second (gbind f) <$> es)
     Global v -> f v
     Con _ -> expr
     Lit _ -> expr
@@ -158,7 +158,7 @@ instance Bifoldable Expr where bifoldMap = bifoldMapDefault
 instance Bitraversable Expr where
   bitraverse f g expr = case expr of
     Var v -> Var <$> g v
-    Meta m es -> Meta <$> f m <*> traverse (bitraverse f g) es
+    Meta m es -> Meta <$> f m <*> traverse (traverse $ bitraverse f g) es
     Global v -> pure $ Global v
     Con c -> pure $ Con c
     Lit l -> pure $ Lit l
@@ -169,11 +169,28 @@ instance Bitraversable Expr where
     Case e brs retType -> Case <$> bitraverse f g e <*> bitraverseBranches f g brs <*> bitraverse f g retType
     ExternCode c t -> ExternCode <$> traverse (bitraverse f g) c <*> bitraverse f g t
 
+bindMeta
+  :: Monad f
+  => (forall a. meta -> Vector (Plicitness, Expr meta' a) -> f (Expr meta' a))
+  -> Expr meta v
+  -> f (Expr meta' v)
+bindMeta f expr = case expr of
+  Var v -> pure $ Var v
+  Meta m es -> f m =<< traverse (traverse $ bindMeta f) es
+  Global v -> pure $ Global v
+  Con c -> pure $ Con c
+  Lit l -> pure $ Lit l
+  Pi h a t s -> Pi h a <$> bindMeta f t <*> transverseScope (bindMeta f) s
+  Lam h a t s -> Lam h a <$> bindMeta f t <*> transverseScope (bindMeta f) s
+  App e1 a e2 -> App <$> bindMeta f e1 <*> pure a <*> bindMeta f e2
+  Let ds scope -> Let <$> transverseLet (bindMeta f) ds <*> transverseScope (bindMeta f) scope
+  Case e brs retType -> Case <$> bindMeta f e <*> transverseBranches (bindMeta f) brs <*> bindMeta f retType
+  ExternCode c t -> ExternCode <$> traverse (bindMeta f) c <*> bindMeta f t
 
 instance (v ~ Doc, Pretty m, Eq m) => Pretty (Expr m v) where
   prettyM expr = case expr of
     Var v -> prettyM v
-    Meta m es -> prettyApps (prettyM m) (prettyM <$> es)
+    Meta m es -> prettyApps (prettyM m) ((\(p, e) -> prettyAnnotation p $ prettyM e) <$> es)
     Global g -> prettyM g
     Con c -> prettyM c
     Lit l -> prettyM l

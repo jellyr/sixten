@@ -16,7 +16,7 @@ import qualified Data.Vector as Vector
 import {-# SOURCE #-} Inference.TypeCheck.Expr
 import qualified Builtin.Names as Builtin
 import Inference.Constructor
-import Inference.Meta
+import Inference.MetaVar
 import Inference.Monad
 import Inference.Subtype
 import Inference.TypeOf
@@ -25,6 +25,7 @@ import Syntax
 import qualified Syntax.Abstract as Abstract
 import Syntax.Abstract.Pattern as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
+import TypedFreeVar
 import Util
 import VIX
 
@@ -34,17 +35,17 @@ data ExpectedPat
 
 checkPat
   :: Plicitness
-  -> Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr MetaA) ()
-  -> Vector MetaA
+  -> Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr FreeV) ()
+  -> Vector FreeV
   -> Polytype
-  -> Infer (Abstract.Pat AbstractM MetaA, AbstractM, Vector MetaA)
+  -> Infer (Abstract.Pat AbstractM FreeV, AbstractM, Vector FreeV)
 checkPat p pat vs expectedType = tcPat p pat vs $ CheckPat expectedType
 
 inferPat
   :: Plicitness
-  -> Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr MetaA) ()
-  -> Vector MetaA
-  -> Infer (Abstract.Pat AbstractM MetaA, AbstractM, Vector MetaA, Polytype)
+  -> Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr FreeV) ()
+  -> Vector FreeV
+  -> Infer (Abstract.Pat AbstractM FreeV, AbstractM, Vector FreeV, Polytype)
 inferPat p pat vs = do
   ref <- liftST $ newSTRef $ error "inferPat: empty result"
   (pat', patExpr, vs') <- tcPat p pat vs $ InferPat ref
@@ -52,10 +53,10 @@ inferPat p pat vs = do
   return (pat', patExpr, vs', t)
 
 tcPats
-  :: Vector (Plicitness, Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr MetaA) ())
-  -> Vector MetaA
-  -> Telescope Plicitness Abstract.Expr MetaA
-  -> Infer (Vector (Abstract.Pat AbstractM MetaA, AbstractM, AbstractM), Vector MetaA)
+  :: Vector (Plicitness, Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr FreeV) ())
+  -> Vector FreeV
+  -> Telescope Plicitness (Abstract.Expr MetaVar) FreeV
+  -> Infer (Vector (Abstract.Pat AbstractM FreeV, AbstractM, AbstractM), Vector FreeV)
 tcPats pats vs tele = do
   unless (Vector.length pats == teleLength tele)
     $ internalError "tcPats length mismatch"
@@ -74,28 +75,28 @@ tcPats pats vs tele = do
 
 tcPat
   :: Plicitness
-  -> Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr MetaA) ()
-  -> Vector MetaA
+  -> Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr FreeV) ()
+  -> Vector FreeV
   -> ExpectedPat
-  -> Infer (Abstract.Pat AbstractM MetaA, AbstractM, Vector MetaA)
+  -> Infer (Abstract.Pat AbstractM FreeV, AbstractM, Vector FreeV)
 tcPat p pat vs expected = do
   whenVerbose 20 $ do
-    shownPat <- bitraverse (showMeta . instantiatePattern pure vs) pure pat
+    let shownPat = first (pretty . fmap pretty . instantiatePattern pure vs) pat
     logPretty 20 "tcPat" shownPat
-  logMeta 30 "tcPat vs" vs
+  logPretty 30 "tcPat vs" vs
   (pat', patExpr, vs') <- indentLog $ tcPat' p pat vs expected
   whenVerbose 20 $ do
-    shownPat' <- bitraverse (pure . show) pure pat'
-    logMeta 20 "tcPat res" shownPat'
-  logMeta 30 "tcPat vs res" vs'
+    let shownPat' = first show pat'
+    logShow 20 "tcPat res" shownPat'
+  logPretty 30 "tcPat vs res" vs'
   return (pat', patExpr, vs')
 
 tcPat'
   :: Plicitness
-  -> Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr MetaA) ()
-  -> Vector MetaA
+  -> Concrete.Pat (HashSet QConstr) (PatternScope Concrete.Expr FreeV) ()
+  -> Vector FreeV
   -> ExpectedPat
-  -> Infer (Abstract.Pat AbstractM MetaA, AbstractM, Vector MetaA)
+  -> Infer (Abstract.Pat AbstractM FreeV, AbstractM, Vector FreeV)
 tcPat' p pat vs expected = case pat of
   Concrete.VarPat h () -> do
     expectedType <- case expected of
@@ -104,7 +105,7 @@ tcPat' p pat vs expected = case pat of
         liftST $ writeSTRef ref expectedType
         return expectedType
       CheckPat expectedType -> return expectedType
-    v <- forall h p expectedType
+    v <- freeVar h p expectedType
     return (Abstract.VarPat h v, pure v, vs <> pure v)
   Concrete.WildcardPat -> do
     expectedType <- case expected of
@@ -113,7 +114,7 @@ tcPat' p pat vs expected = case pat of
         liftST $ writeSTRef ref expectedType
         return expectedType
       CheckPat expectedType -> return expectedType
-    v <- forall mempty p expectedType
+    v <- freeVar mempty p expectedType
     return (Abstract.VarPat mempty v, pure v, vs)
   Concrete.LitPat lit -> do
     (pat', expr) <- instPatExpected
@@ -167,9 +168,9 @@ tcPat' p pat vs expected = case pat of
 instPatExpected
   :: ExpectedPat
   -> Polytype -- ^ patType
-  -> Abstract.Pat AbstractM MetaA -- ^ pat
+  -> Abstract.Pat AbstractM FreeV -- ^ pat
   -> AbstractM -- ^ :: patType
-  -> Infer (Abstract.Pat AbstractM MetaA, AbstractM) -- ^ (pat :: expectedType, :: expectedType)
+  -> Infer (Abstract.Pat AbstractM FreeV, AbstractM) -- ^ (pat :: expectedType, :: expectedType)
 instPatExpected (CheckPat expectedType) patType pat patExpr = do
   f <- subtype expectedType patType
   viewPat expectedType pat patExpr f
@@ -179,21 +180,21 @@ instPatExpected (InferPat ref) patType pat patExpr = do
 
 viewPat
   :: AbstractM -- ^ expectedType
-  -> Abstract.Pat AbstractM MetaA -- ^ pat
+  -> Abstract.Pat AbstractM FreeV -- ^ pat
   -> AbstractM -- ^ :: patType
   -> (AbstractM -> Infer AbstractM) -- ^ expectedType -> patType
-  -> Infer (Abstract.Pat AbstractM MetaA, AbstractM) -- ^ (expectedType, :: expectedType)
+  -> Infer (Abstract.Pat AbstractM FreeV, AbstractM) -- ^ (expectedType, :: expectedType)
 viewPat expectedType pat patExpr f = do
-  x <- forall mempty Explicit expectedType
+  x <- freeVar mempty Explicit expectedType
   fx <- f $ pure x
   if fx == pure x then
     return (pat, patExpr)
   else do
-    fExpr <- Abstract.Lam mempty Explicit expectedType <$> abstract1M x fx
+    let fExpr = Abstract.Lam mempty Explicit expectedType $ abstract1 x fx
     return (Abstract.ViewPat fExpr pat, pure x)
 
 patToTerm
-  :: Abstract.Pat AbstractM MetaA
+  :: Abstract.Pat AbstractM FreeV
   -> Infer (Maybe AbstractM)
 patToTerm pat = case pat of
   Abstract.VarPat _ v -> return $ Just $ Abstract.Var v

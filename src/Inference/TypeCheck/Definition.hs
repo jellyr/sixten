@@ -19,7 +19,7 @@ import {-# SOURCE #-} Inference.TypeCheck.Expr
 import qualified Builtin.Names as Builtin
 import Inference.Constraint
 import Inference.Cycle
-import Inference.Meta
+import Inference.MetaVar
 import Inference.Monad
 import Inference.TypeCheck.Clause
 import Inference.TypeCheck.Data
@@ -33,19 +33,19 @@ import Util.TopoSort
 import VIX
 
 checkDefType
-  :: Concrete.PatDefinition (Concrete.Clause Void Concrete.Expr MetaA)
+  :: Concrete.PatDefinition (Concrete.Clause Void Concrete.Expr FreeV)
   -> AbstractM
-  -> Infer (Definition Abstract.Expr MetaA, AbstractM)
+  -> Infer (Definition (Abstract.Expr MetaVar) FreeV, AbstractM)
 checkDefType (Concrete.PatDefinition a i clauses) typ = do
   e' <- checkClauses clauses typ
   return (Definition a i e', typ)
 
 checkTopLevelDefType
-  :: MetaA
-  -> Concrete.TopLevelPatDefinition Concrete.Expr MetaA
+  :: FreeV
+  -> Concrete.TopLevelPatDefinition Concrete.Expr FreeV
   -> SourceLoc
   -> AbstractM
-  -> Infer (Definition Abstract.Expr MetaA, AbstractM)
+  -> Infer (Definition Abstract.Expr FreeV, AbstractM)
 checkTopLevelDefType v def loc typ = located loc $ case def of
   Concrete.TopLevelPatDefinition def' -> checkDefType def' typ
   Concrete.TopLevelPatDataDefinition d -> checkDataType v d typ
@@ -55,33 +55,33 @@ checkTopLevelDefType v def loc typ = located loc $ case def of
 
 generaliseDef
   :: Foldable t
-  => t (Plicitness, MetaA)
-  -> Definition Abstract.Expr MetaA
+  => t FreeV
+  -> Definition Abstract.Expr FreeV
   -> AbstractM
-  -> Infer (Definition Abstract.Expr MetaA, AbstractM)
+  -> Infer (Definition Abstract.Expr FreeV, AbstractM)
 generaliseDef vs (Definition a i e) t = do
-  ge <- abstractMs vs Abstract.Lam e
-  gt <- abstractMs vs Abstract.Pi t
+  ge <- abstract1s vs Abstract.Lam e
+  gt <- abstract1s vs Abstract.Pi t
   return (Definition a i ge, gt)
 generaliseDef vs (DataDefinition (DataDef cs) rep) typ = do
   let cs' = map (fmap $ toScope . splat f g) cs
   -- Abstract vs on top of typ
-  grep <- abstractMs vs Abstract.Lam rep
-  gtyp <- abstractMs vs Abstract.Pi typ
+  grep <- abstract1s vs Abstract.Lam rep
+  gtyp <- abstract1s vs Abstract.Pi typ
   return (DataDefinition (DataDef cs') grep, gtyp)
   where
     varIndex = hashedElemIndex $ snd <$> toVector vs
     f v = pure $ maybe (F v) (B . TeleVar) (varIndex v)
     g = pure . B . (+ TeleVar (length vs))
 
-abstractMs
+abstract1s
   :: Foldable t
-  => t (Plicitness, MetaA)
-  -> (NameHint -> Plicitness -> AbstractM -> ScopeM () Abstract.Expr -> AbstractM)
+  => t FreeV
+  -> (NameHint -> Plicitness -> AbstractM -> Scope () (Abstract.Expr MetaVar) FreeV -> AbstractM)
   -> AbstractM
-  -> Infer AbstractM
-abstractMs vs c b = foldrM
-  (\(p, v)  s -> c (metaHint v) p (metaType v) <$> abstract1M v s)
+  -> AbstractM
+abstract1s vs c b = foldr
+  (\v s -> c (metaHint v) (metaData v) (metaType v) $ abstract1 v s)
   b
   vs
 
@@ -93,17 +93,17 @@ data GeneraliseDefsMode
 generaliseDefs
   :: GeneraliseDefsMode
   -> Vector
-    ( MetaA
-    , Definition Abstract.Expr MetaA
+    ( FreeV
+    , Definition Abstract.Expr FreeV
     , AbstractM
     )
   -> Infer
     ( Vector
-      ( MetaA
-      , Definition Abstract.Expr MetaA
+      ( FreeV
+      , Definition Abstract.Expr FreeV
       , AbstractM
       )
-    , MetaA -> MetaA
+    , FreeV -> FreeV
     )
 generaliseDefs mode defs = indentLog $ do
   -- After type-checking we may actually be in a situation where a dependency

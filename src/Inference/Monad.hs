@@ -18,7 +18,7 @@ import qualified Util.Tsil as Tsil
 import Util.Tsil(Tsil)
 import VIX
 
-type FreeV = FreeVar (Abstract.Expr MetaVar)
+type FreeV = FreeVar Plicitness (Abstract.Expr MetaVar)
 type ConcreteM = Concrete.Expr FreeV
 type AbstractM = Abstract.Expr MetaVar FreeV
 
@@ -71,13 +71,12 @@ exists
   -> Infer AbstractM
 exists hint d typ = do
   locals <- toVector <$> asks localVariables
-  let plocals = (\v -> (Explicit, v)) <$> locals
-      tele = varTelescope plocals
+  let tele = varTelescope locals
       abstr = teleAbstraction locals
       typ' = Abstract.pis tele $ abstract abstr typ
   typ'' <- traverse (error "exists not closed") typ'
   v <- existsAtLevel hint d typ'' =<< level
-  return $ Abstract.Meta v $ pure <$> locals
+  return $ Abstract.Meta v $ (\fv -> (varData fv, pure fv)) <$> locals
 
 existsType
   :: NameHint

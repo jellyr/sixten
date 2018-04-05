@@ -11,6 +11,7 @@ import Inference.Monad
 import MonadContext
 import Syntax
 import Syntax.Abstract
+import TypedFreeVar
 import TypeRep(TypeRep)
 import qualified TypeRep
 import Util
@@ -62,7 +63,7 @@ whnf' args expr = indentLog $ do
     go f es@((p, e):es') = do
       f' <- whnfInner args f
       case f' of
-        Lam h p' t s | p == p' -> do
+        Lam _ p' t s | p == p' -> do
           -- eVar <- shared h p e t
           let eVar = e -- TODO
           go (Util.instantiate1 eVar s) es'
@@ -91,7 +92,8 @@ whnfInner
   -> AbstractM
   -> m AbstractM
 whnfInner args expr = case expr of
-  Var v -> refineVar v $ whnf' args
+  Var _ -> return expr
+  Meta m es -> traverseMeta (whnf' args) m es
   Global g -> do
     (d, _) <- definition g
     case d of
@@ -122,7 +124,8 @@ normalise
 normalise expr = do
   logMeta 40 "normalise e" expr
   res <- indentLog $ case expr of
-    Var v -> refineVar v normalise
+    Var _ -> return expr
+    Meta m es -> traverseMeta normalise m es
     Global g -> do
       (d, _) <- definition g
       case d of
@@ -147,9 +150,10 @@ normalise expr = do
     App e1 p e2 -> do
       e1' <- normalise e1
       case e1' of
-        Lam h p' t s | p == p' -> do
-          e2Var <- shared h p e2 t
-          normalise $ Util.instantiate1 (pure e2Var) s
+        Lam h p' t s | p == p' ->
+          -- TODO
+          -- e2Var <- shared h p e2 t
+          normalise $ Util.instantiate1 e2 s
         _ -> do
           e2' <- normalise e2
           return $ App e1' p e2'
@@ -176,24 +180,22 @@ normalise expr = do
   return res
   where
     normaliseTelescope tele scope = do
-      pvs <- forTeleWithPrefixM tele $ \h p s avs -> do
-        t' <- normalise $ instantiateTele pure (snd <$> avs) s
-        v <- forall h p t'
-        return (p, v)
+      vs <- forTeleWithPrefixM tele $ \h p s vs -> do
+        t' <- normalise $ instantiateTele pure vs s
+        freeVar h p t'
 
-      let vs = snd <$> pvs
-          abstr = teleAbstraction vs
+      let abstr = teleAbstraction vs
       e' <- withVars vs $ normalise $ instantiateTele pure vs scope
-      scope' <- abstractM abstr e'
-      tele' <- forM pvs $ \(p, v) -> do
-        s <- abstractM abstr $ metaType v
-        return $ TeleArg (metaHint v) p s
+      let scope' = abstract abstr e'
+      tele' <- forM vs $ \v -> do
+        let s = abstract abstr $ varType v
+        return $ TeleArg (varHint v) (varData v) s
       return (Telescope tele', scope')
     normaliseScope h p c t s = do
       t' <- normalise t
-      x <- forall h p t'
+      x <- freeVar h p t'
       ns <- withVar x $ normalise $ Util.instantiate1 (pure x) s
-      c t' <$> abstract1M x ns
+      return $ c t' $ abstract1 x ns
 
 binOp
   :: Monad m
@@ -258,8 +260,8 @@ instantiateLetM
   -> Scope LetVar (Expr MetaVar) FreeV
   -> m AbstractM
 instantiateLetM ds scope = mdo
-  vs <- forMLet ds $ \h s t -> shared h Explicit (instantiateLet pure vs s) t
-  return $ instantiateLet pure vs scope
+  es <- forMLet ds $ \h s t -> return $ instantiateLet id es s -- TODO shared h Explicit (instantiateLet pure vs s) t
+  return $ instantiateLet id es scope
 
 etaReduce :: Expr meta v -> Maybe (Expr meta v)
 etaReduce (Lam _ p _ (Scope (App e1scope p' (Var (B ())))))

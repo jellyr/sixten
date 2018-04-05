@@ -14,7 +14,7 @@ import Data.Void
 import {-# SOURCE #-} Inference.TypeCheck.Expr
 import Inference.Constraint
 import Inference.Match as Match
-import Inference.Meta
+import Inference.MetaVar
 import Inference.Monad
 import Inference.Subtype
 import Inference.TypeCheck.Pattern
@@ -22,15 +22,16 @@ import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
+import TypedFreeVar
 import Util
 import VIX
 
 checkClauses
-  :: NonEmpty (Concrete.Clause Void Concrete.Expr MetaA)
+  :: NonEmpty (Concrete.Clause Void Concrete.Expr FreeV)
   -> Polytype
   -> Infer AbstractM
 checkClauses clauses polyType = indentLog $ do
-  forM_ clauses $ logMeta 20 "checkClauses clause"
+  forM_ clauses $ \clause -> logPretty 20 "checkClauses clause" $ pretty <$> clause
   logMeta 20 "checkClauses typ" polyType
 
   skolemise polyType (minimum $ instUntilClause <$> clauses) $ \rhoType f -> do
@@ -42,7 +43,7 @@ checkClauses clauses polyType = indentLog $ do
 
     let equalisedClauses = equaliseClauses clauses'
 
-    forM_ equalisedClauses $ logMeta 20 "checkClauses equalisedClause"
+    forM_ equalisedClauses $ \clause -> logPretty 20 "checkClauses equalisedClause" $ pretty <$> clause
 
     res <- checkClausesRho equalisedClauses rhoType
 
@@ -63,16 +64,16 @@ checkClauses clauses polyType = indentLog $ do
 
     piPlicitnesses' :: AbstractM -> Infer [Plicitness]
     piPlicitnesses' (Abstract.Pi h p t s) = do
-      v <- forall h p t
+      v <- freeVar h p t
       (:) p <$> piPlicitnesses (instantiate1 (pure v) s)
     piPlicitnesses' _ = return mempty
 
 checkClausesRho
-  :: NonEmpty (Concrete.Clause Void Concrete.Expr MetaA)
+  :: NonEmpty (Concrete.Clause Void Concrete.Expr FreeV)
   -> Rhotype
   -> Infer AbstractM
 checkClausesRho clauses rhoType = do
-  forM_ clauses $ logMeta 20 "checkClausesRho clause"
+  forM_ clauses $ \clause -> logPretty 20 "checkClausesRho clause" $ pretty <$> clause
   logMeta 20 "checkClausesRho type" rhoType
 
   let (ps, firstPats) = Vector.unzip ppats
@@ -91,11 +92,11 @@ checkClausesRho clauses rhoType = do
     return (fst3 <$> pats', body')
 
   forM_ clauses' $ \(pats, body) -> do
-    forM_ pats $ logMeta 20 "checkClausesRho clause pat" <=< bitraverse showMeta pure
+    forM_ pats $ logPretty 20 "checkClausesRho clause pat" <=< bitraverse prettyMeta (pure . pretty)
     logMeta 20 "checkClausesRho clause body" body
 
   argVars <- forTeleWithPrefixM (addTeleNames argTele $ Concrete.patternHint <$> firstPats) $ \h p s argVars ->
-    forall h p $ instantiateTele pure argVars s
+    freeVar h p $ instantiateTele pure argVars s
 
   withVars argVars $ do
     let returnType = instantiateTele pure argVars returnTypeScope
@@ -108,10 +109,10 @@ checkClausesRho clauses rhoType = do
     logMeta 25 "checkClausesRho body res" body
 
     result <- foldrM
-      (\(p, (f, v)) e ->
-        f =<< Abstract.Lam (metaHint v) p (metaType v) <$> abstract1M v e)
+      (\(f, v) e ->
+        f $ Abstract.Lam (varHint v) (varData v) (varType v) $ abstract1 v e)
       body
-      (Vector.zip ps $ Vector.zip fs argVars)
+      (Vector.zip fs argVars)
 
     logMeta 20 "checkClausesRho res" result
     return result

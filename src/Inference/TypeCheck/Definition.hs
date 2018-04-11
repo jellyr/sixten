@@ -179,15 +179,13 @@ generaliseDefs mode defs = indentLog $ do
     return (v, d', t')
 
   newVars <- forM genDefs $ \(v, _, t) ->
-    forall (metaHint v) (metaData v) t
+    freeVar (varHint v) (varData v) t
 
   let lookupNewVar = hashedLookup $ Vector.zip vars newVars
       newVarSub v = fromMaybe v $ lookupNewVar v
 
-  newVarDefs <- forM (Vector.zip newVars genDefs) $ \(v, (_, d, t)) -> do
-    d' <- boundM (return . pure . newVarSub) d
-    t' <- bindM (return . pure . newVarSub) t
-    return (v, d', t')
+  let newVarDefs = flip fmap (Vector.zip newVars genDefs) $ \(v, (_, d, t)) ->
+        (v, newVarSub <$> d, newVarSub <$> t)
 
   return (newVarDefs, newVarSub)
   where

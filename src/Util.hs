@@ -14,12 +14,14 @@ import Data.Bifunctor
 import Data.Bits
 import Data.Foldable
 import Data.Hashable
+import Data.HashMap.Lazy(HashMap)
 import qualified Data.HashMap.Lazy as HashMap
 import Data.HashSet(HashSet)
 import qualified Data.HashSet as HashSet
 import Data.List.NonEmpty(NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe
+import Data.Semigroup
 import Data.Set(Set)
 import qualified Data.Set as Set
 import Data.String
@@ -69,8 +71,11 @@ toSet = foldMap Set.singleton
 toVector :: Foldable f => f a -> Vector a
 toVector = Vector.fromList . toList
 
-toHashSet ::  (Eq a, Foldable f, Hashable a) => f a -> HashSet a
+toHashSet ::  (Eq a, Hashable a, Foldable f) => f a -> HashSet a
 toHashSet = foldMap HashSet.singleton
+
+toHashMap :: (Eq a, Hashable a, Foldable f) => f (a, b) -> HashMap a b
+toHashMap = foldMap (uncurry HashMap.singleton)
 
 foldMapM :: (Traversable f, Monoid b, Monad m) => (a -> m b) -> f a -> m b
 foldMapM f = fmap fold . mapM f
@@ -236,6 +241,30 @@ saturate
   -> HashSet a
   -> HashSet a
 saturate f = fixPoint $ \s -> HashSet.unions $ s : map f (HashSet.toList s)
+
+saturateMap
+  :: (Eq a, Eq b, Hashable a, Semigroup b, Foldable f)
+  => (b -> f a)
+  -> HashMap a b
+  -> HashMap a b
+saturateMap f = fixPoint $ \m -> unions
+  $ m
+  : [ HashMap.singleton a b'
+    | b <- HashMap.elems m
+    , a <- toList $ f b
+    , Just b' <- [HashMap.lookup a m]
+    ]
+  where
+    unions = foldl' (HashMap.unionWith (<>)) mempty
+
+filterMSet
+  :: (Applicative f, Eq a, Hashable a)
+  => (a -> f Bool)
+  -> HashSet a
+  -> f (HashSet a)
+filterMSet f s  
+  = HashSet.fromMap . void . HashMap.filter id
+  <$> HashMap.traverseWithKey (\a _ -> f a) (HashSet.toMap s)
 
 withFile :: MonadBaseControl IO m => FilePath -> IOMode -> (Handle -> m r) -> m r
 withFile name mode = liftBaseOp $ bracket (openFile name mode) hClose

@@ -15,6 +15,7 @@ import qualified Data.Vector as Vector
 import Data.Void
 
 import Inference.MetaVar
+import Inference.MetaVar.Zonk
 import Inference.Monad
 import Inference.Normalise
 import Inference.TypeOf
@@ -34,7 +35,7 @@ occurs
   -> Infer ()
 occurs cxt l mv expr = bitraverse_ go pure expr
   where
-    go mv'@(MetaVar _ typ _ r _)
+    go mv'
       | mv == mv' = do
         explanation <- forM cxt $ \(t1, t2) -> do
           t1' <- zonk t1
@@ -60,10 +61,10 @@ occurs cxt l mv expr = bitraverse_ go pure expr
             , "while trying to unify"
             ] ++ intercalate ["", "while trying to unify"] explanation)
       | otherwise = do
-        occurs cxt l mv $ vacuous typ
+        occurs cxt l mv $ vacuous $ metaType mv'
         sol <- solution mv
         case sol of
-          Left l' -> liftST $ writeSTRef r $ Left $ min l l'
+          Left l' -> liftST $ writeSTRef (metaRef mv') $ Left $ min l l'
           Right expr' -> traverse_ go $ vacuous expr'
 
 prune :: HashSet FreeV -> AbstractM -> Infer ()

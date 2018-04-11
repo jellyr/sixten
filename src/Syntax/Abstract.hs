@@ -7,6 +7,7 @@ import Data.Bifunctor
 import Data.Bitraversable
 import Data.Deriving
 import Data.Foldable as Foldable
+import Data.Functor.Const
 import Data.Monoid
 import Data.Vector(Vector)
 
@@ -186,6 +187,13 @@ bindMeta f expr = case expr of
   Let ds scope -> Let <$> transverseLet (bindMeta f) ds <*> transverseScope (bindMeta f) scope
   Case e brs retType -> Case <$> bindMeta f e <*> transverseBranches (bindMeta f) brs <*> bindMeta f retType
   ExternCode c t -> ExternCode <$> traverse (bindMeta f) c <*> bindMeta f t
+
+bindMeta_
+  :: Monad f
+  => (meta -> f ())
+  -> Expr meta v
+  -> f ()
+bindMeta_ f = void . bindMeta (\m es -> const (Meta m es) <$> f m)
 
 instance (v ~ Doc, Pretty m, Eq m) => Pretty (Expr m v) where
   prettyM expr = case expr of

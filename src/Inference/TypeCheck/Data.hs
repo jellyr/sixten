@@ -8,6 +8,7 @@ import {-# SOURCE #-} Inference.TypeCheck.Expr
 import qualified Builtin.Names as Builtin
 import Inference.Constraint as Constraint
 import Inference.MetaVar
+import Inference.MetaVar.Zonk
 import Inference.Monad
 import Inference.TypeOf
 import Inference.Unify

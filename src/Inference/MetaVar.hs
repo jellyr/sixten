@@ -4,12 +4,9 @@ module Inference.MetaVar where
 import Control.Monad.Except
 import Control.Monad.ST
 import Control.Monad.State
-import Data.Bifoldable
 import Data.Bitraversable
 import Data.Function
 import Data.Hashable
-import qualified Data.HashSet as HashSet
-import Data.HashSet(HashSet)
 import Data.Monoid
 import Data.STRef
 import Data.String
@@ -35,8 +32,9 @@ data MetaVar = MetaVar
   { metaId  :: !Int
   , metaType :: Expr MetaVar Void
   , metaHint :: !NameHint
-  , metaRef :: !MetaRef
   , metaPlicitness :: !Plicitness
+  , metaParams :: Telescope Plicitness (Expr MetaVar) Void
+  , metaRef :: !MetaRef
   }
 
 instance Eq MetaVar where
@@ -49,23 +47,25 @@ instance Hashable MetaVar where
   hashWithSalt s = hashWithSalt s . metaId
 
 instance Show MetaVar where
-  showsPrec d (MetaVar i t h _ _) = showParen (d > 10) $
+  showsPrec d (MetaVar i t h p ps _) = showParen (d > 10) $
     showString "Meta" . showChar ' ' . showsPrec 11 i .
     showChar ' ' . showsPrec 11 t . showChar ' ' . showsPrec 11 h .
+    showChar ' ' . showsPrec 11 p . showChar ' ' . showsPrec 11 ps .
     showChar ' ' . showString "<Ref>"
 
 existsAtLevel
   :: (MonadVIX m, MonadIO m)
   => NameHint
   -> Plicitness
+  -> Telescope Plicitness (Expr MetaVar) Void
   -> Expr MetaVar Void
   -> Level
   -> m MetaVar
-existsAtLevel hint p typ l = do
+existsAtLevel hint p tele typ l = do
   i <- fresh
   ref <- liftST $ newSTRef $ Left l
   logVerbose 20 $ "exists: " <> fromString (show i)
-  return $ MetaVar i typ hint ref p
+  return $ MetaVar i typ hint p tele ref
 
 solution
   :: MonadIO m
@@ -80,13 +80,13 @@ solve
   -> m ()
 solve m x = liftST $ writeSTRef (metaRef m) $ Right x
 
-traverseMeta
+traverseMetaSolution
   :: MonadIO m
   => (Expr MetaVar v -> m (Expr MetaVar v))
   -> MetaVar
   -> Vector (Plicitness, Expr MetaVar v)
   -> m (Expr MetaVar v)
-traverseMeta f m es = do
+traverseMetaSolution f m es = do
   sol <- solution m
   case sol of
     Left _ -> return $ Meta m es
@@ -131,22 +131,3 @@ logMeta v s e = whenVerbose v $ do
   i <- liftVIX $ gets vixIndent
   d <- prettyMeta e
   VIX.log $ mconcat (replicate i "| ") <> "--" <> fromString s <> ": " <> showWide d
-
-zonk :: MonadIO m => Expr MetaVar v -> m (Expr MetaVar v)
-zonk = bindMeta $ \m es -> do
-  sol <- solution m
-  case sol of
-    Left _ -> return $ Meta m es
-    Right e -> return $ apps (vacuous e) es
-
-metaVars :: MonadIO m => Expr MetaVar v -> m (HashSet MetaVar)
-metaVars expr = execStateT (bitraverse_ go (const $ pure ()) expr) mempty
-  where
-    go m = do
-      visited <- get
-      unless (m `HashSet.member` visited) $ do
-        bitraverse_ go (const $ pure ()) $ metaType m
-        sol <- solution m
-        case sol of
-          Left _ -> return ()
-          Right e -> bitraverse_ go (const $ pure ()) e

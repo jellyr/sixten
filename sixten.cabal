@@ -51,6 +51,7 @@ executable sixten
                        Inference.Cycle
                        Inference.Match
                        Inference.MetaVar
+                       Inference.MetaVar.Zonk
                        Inference.Monad
                        Inference.Normalise
                        Inference.Subtype

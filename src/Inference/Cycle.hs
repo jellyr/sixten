@@ -16,6 +16,7 @@ import Data.Vector(Vector)
 
 import Error
 import Inference.MetaVar
+import Inference.MetaVar.Zonk
 import Inference.Monad
 import Syntax
 import Syntax.Abstract

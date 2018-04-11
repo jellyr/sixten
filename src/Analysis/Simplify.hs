@@ -125,15 +125,15 @@ etaLams glob applied tele scope = case go 0 $ fromScope scope of
     len = teleLength tele
     as = teleAnnotations tele
 
-betaApp ::  Expr Void v -> Plicitness -> Expr Void v -> Expr Void v
+betaApp ::  Expr meta v -> Plicitness -> Expr meta v -> Expr meta v
 betaApp (Lam h a1 t s) a2 e2 | a1 == a2 = let_ (const True) h e2 t s
 betaApp e1 a e2 = App e1 a e2
 
 betaApps
   :: Foldable t
-  => Expr Void v
-  -> t (Plicitness, Expr Void v)
-  -> Expr Void v
+  => Expr meta v
+  -> t (Plicitness, Expr meta v)
+  -> Expr meta v
 betaApps = Foldable.foldl (uncurry . betaApp)
 
 -- | Is it cost-free to duplicate this expression?

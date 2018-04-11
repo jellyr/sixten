@@ -20,6 +20,7 @@ import qualified Builtin.Names as Builtin
 import Inference.Constraint
 import Inference.Cycle
 import Inference.MetaVar
+import Inference.MetaVar.Zonk
 import Inference.Monad
 import Inference.TypeCheck.Clause
 import Inference.TypeCheck.Data
@@ -28,7 +29,9 @@ import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
+import TypedFreeVar
 import Util
+import qualified Util.MultiHashMap as MultiHashMap
 import Util.TopoSort
 import VIX
 
@@ -45,7 +48,7 @@ checkTopLevelDefType
   -> Concrete.TopLevelPatDefinition Concrete.Expr FreeV
   -> SourceLoc
   -> AbstractM
-  -> Infer (Definition Abstract.Expr FreeV, AbstractM)
+  -> Infer (Definition (Abstract.Expr MetaVar) FreeV, AbstractM)
 checkTopLevelDefType v def loc typ = located loc $ case def of
   Concrete.TopLevelPatDefinition def' -> checkDefType def' typ
   Concrete.TopLevelPatDataDefinition d -> checkDataType v d typ
@@ -53,24 +56,24 @@ checkTopLevelDefType v def loc typ = located loc $ case def of
   Concrete.TopLevelPatClassDefinition _ -> error "checkTopLevelDefType class"
   Concrete.TopLevelPatInstanceDefinition _ -> error "checkTopLevelDefType instance"
 
-generaliseDef
+abstractDef
   :: Foldable t
   => t FreeV
-  -> Definition Abstract.Expr FreeV
+  -> Definition (Abstract.Expr MetaVar) FreeV
   -> AbstractM
-  -> Infer (Definition Abstract.Expr FreeV, AbstractM)
-generaliseDef vs (Definition a i e) t = do
-  ge <- abstract1s vs Abstract.Lam e
-  gt <- abstract1s vs Abstract.Pi t
-  return (Definition a i ge, gt)
-generaliseDef vs (DataDefinition (DataDef cs) rep) typ = do
+  -> (Definition (Abstract.Expr MetaVar) FreeV, AbstractM)
+abstractDef vs (Definition a i e) t = do
+  let ge = abstract1s vs Abstract.Lam e
+      gt = abstract1s vs Abstract.Pi t
+  (Definition a i ge, gt)
+abstractDef vs (DataDefinition (DataDef cs) rep) typ = do
   let cs' = map (fmap $ toScope . splat f g) cs
   -- Abstract vs on top of typ
-  grep <- abstract1s vs Abstract.Lam rep
-  gtyp <- abstract1s vs Abstract.Pi typ
-  return (DataDefinition (DataDef cs') grep, gtyp)
+  let grep = abstract1s vs Abstract.Lam rep
+      gtyp = abstract1s vs Abstract.Pi typ
+  (DataDefinition (DataDef cs') grep, gtyp)
   where
-    varIndex = hashedElemIndex $ snd <$> toVector vs
+    varIndex = hashedElemIndex $ toVector vs
     f v = pure $ maybe (F v) (B . TeleVar) (varIndex v)
     g = pure . B . (+ TeleVar (length vs))
 
@@ -81,7 +84,7 @@ abstract1s
   -> AbstractM
   -> AbstractM
 abstract1s vs c b = foldr
-  (\v s -> c (metaHint v) (metaData v) (metaType v) $ abstract1 v s)
+  (\v s -> c (varHint v) (varData v) (varType v) $ abstract1 v s)
   b
   vs
 
@@ -94,13 +97,13 @@ generaliseDefs
   :: GeneraliseDefsMode
   -> Vector
     ( FreeV
-    , Definition Abstract.Expr FreeV
+    , Definition (Abstract.Expr MetaVar) FreeV
     , AbstractM
     )
   -> Infer
     ( Vector
       ( FreeV
-      , Definition Abstract.Expr FreeV
+      , Definition (Abstract.Expr MetaVar) FreeV
       , AbstractM
       )
     , FreeV -> FreeV
@@ -113,56 +116,66 @@ generaliseDefs mode defs = indentLog $ do
   -- separately compute dependencies for each definition.
   let vars = (\(v, _, _) -> v) <$> defs
 
-  defFreeVars <- case mode of
-    GeneraliseType -> forM defs $ \_ -> return mempty
-    GeneraliseAll -> forM defs $ \(_, def, _) ->
-      foldMapMetas HashSet.singleton def
+      defFreeVars = case mode of
+        GeneraliseType -> mempty
+        GeneraliseAll -> MultiHashMap.fromMultiList [(v, foldMap HashSet.singleton def) | (v, def, _) <- Vector.toList defs]
 
-  typeFreeVars <- forM defs $ \(_, _, t) ->
-    foldMapMetas HashSet.singleton t
+      typeFreeVars = MultiHashMap.fromMultiList [(v, foldMap HashSet.singleton t) | (v, _, t) <- Vector.toList defs]
 
-  mergeConstraintVars $ HashSet.unions $ toList $ defFreeVars <> typeFreeVars
+  defVars <- case mode of
+    GeneraliseType -> return mempty
+    GeneraliseAll -> forM defs $ \(v, def, _) -> do
+      let fvs = foldMap HashSet.singleton def
+      metas <- definitionMetaVars def
+      return (v, (fvs, metas))
+
+  typeVars <- forM defs $ \(v, _, typ) -> do
+    let fvs = foldMap HashSet.singleton typ
+    metas <- metaVars typ
+    return (v, (fvs, metas))
+
+  mergeConstraintVars $ HashSet.unions $ toList $ snd . snd <$> defVars <> typeVars
 
   l <- level
 
-  let sat p freeVars = do
-        let freeVarsMap = HashMap.fromList $ toList $ Vector.zip vars freeVars
-        forM freeVars $ \fvs -> do
-          let fvs' = saturate (\v -> HashMap.lookupDefault (HashSet.singleton v) v freeVarsMap) fvs
-          fmap HashSet.fromList $ filterM p $ HashSet.toList fvs'
-
-      isLocalConstraint v@MetaVar { metaData = Constraint } = isLocalExists v
+  let isLocalConstraint m@MetaVar { metaPlicitness = Constraint } = isLocalMeta m
       isLocalConstraint _ = return False
 
-      isLocalExists MetaVar { metaRef = Exists r } = either (>= l) (const False) <$> solution r
-      isLocalExists MetaVar { metaRef = Forall } = return False
-      isLocalExists MetaVar { metaRef = LetRef {} } = return False
+      isLocalMeta m = either (>= l) (const False) <$> solution m
 
-  satDefFreeVars <- sat isLocalConstraint defFreeVars
-  satTypeFreeVars <- sat isLocalExists typeFreeVars
+  let satDefVars = saturateMap fst $ toHashMap defVars
+      satTypeVars = saturateMap fst $ toHashMap typeVars
 
-  let freeVars = Vector.zipWith (<>) satDefFreeVars satTypeFreeVars
+  defMetas <- forM vars $ \v -> do
+    let Just (_, ms) = HashMap.lookup v satDefVars
+    filterMSet isLocalConstraint ms
 
-  sortedFreeVars <- forM freeVars $ \fvs -> do
+  typeMetas <- forM vars $ \v -> do
+    let Just (_, ms) = HashMap.lookup v satTypeVars
+    filterMSet isLocalMeta ms
 
-    deps <- forM (HashSet.toList fvs) $ \v -> do
-      ds <- foldMapMetas HashSet.singleton $ metaType v
-      return (v, ds)
+  let metas = Vector.zipWith (<>) defMetas typeMetas
 
-    let sortedFvs = acyclic <$> topoSort deps
+  sortedMetas <- forM metas $ \ms -> do
 
-    return [(implicitise $ metaData fv, fv) | fv <- sortedFvs]
+    deps <- forM (toList ms) $ \m -> do
+      ds <- metaVars $ metaType m
+      return (m, ds)
 
-  let lookupFreeVars = hashedLookup $ Vector.zip vars sortedFreeVars
-      sub v = maybe (pure v) (Abstract.apps (pure v) . fmap (second pure)) $ lookupFreeVars v
+    let sortedMs = acyclic <$> topoSort deps
+
+    return [(implicitise $ metaPlicitness m, m) | m <- sortedMs]
+
+  let lookupMetas = hashedLookup $ Vector.zip vars sortedMetas
+      sub v = maybe (pure v) (Abstract.apps (pure v) . fmap (second pure)) $ lookupMetas v
 
   instDefs <- forM defs $ \(v, d, t) -> do
     d' <- boundM (return . sub) d
     t' <- bindM (return . sub) t
     return (v, d', t')
 
-  genDefs <- forM (Vector.zip sortedFreeVars instDefs) $ \(fvs, (v, d, t)) -> do
-    (d', t') <- generaliseDef fvs d t
+  genDefs <- forM (Vector.zip sortedMetas instDefs) $ \(fvs, (v, d, t)) -> do
+    let (d', t') = abstractDef fvs d t
     return (v, d', t')
 
   newVars <- forM genDefs $ \(v, _, t) ->
@@ -184,16 +197,16 @@ generaliseDefs mode defs = indentLog $ do
 checkRecursiveDefs
   :: Bool
   -> Vector
-    ( MetaA
+    ( FreeV
     , ( SourceLoc
-      , Concrete.TopLevelPatDefinition Concrete.Expr MetaA
+      , Concrete.TopLevelPatDefinition Concrete.Expr FreeV
       , Maybe ConcreteM
       )
     )
   -> Infer
     (Vector
-      ( MetaA
-      , Definition Abstract.Expr MetaA
+      ( FreeV
+      , Definition (Abstract.Expr MetaVar) FreeV
       , AbstractM
       )
     )
@@ -258,15 +271,15 @@ checkRecursiveDefs forceGeneralisation defs = do
 
 checkAndElabDefs
   :: Vector
-    ( MetaA
+    ( FreeV
     , ( SourceLoc
-      , Concrete.TopLevelPatDefinition Concrete.Expr MetaA
+      , Concrete.TopLevelPatDefinition Concrete.Expr FreeV
       )
     )
   -> Infer
     (Vector
-      ( MetaA
-      , Definition Abstract.Expr MetaA
+      ( FreeV
+      , Definition (Abstract.Expr MetaVar) FreeV
       , AbstractM
       )
     )
@@ -288,9 +301,9 @@ checkAndElabDefs defs = indentLog $ do
 
 shouldGeneralise
   :: Vector
-    ( MetaA
+    ( FreeV
     , ( SourceLoc
-      , Concrete.TopLevelPatDefinition Concrete.Expr MetaA
+      , Concrete.TopLevelPatDefinition Concrete.Expr FreeV
       , Maybe ConcreteM
       )
     )
@@ -312,8 +325,8 @@ checkTopLevelRecursiveDefs
   -> Infer
     (Vector
       ( QName
-      , Definition Abstract.Expr Void
-      , Abstract.Type Void
+      , Definition (Abstract.Expr Void) Void
+      , Abstract.Type Void Void
       )
     )
 checkTopLevelRecursiveDefs defs = do
@@ -342,7 +355,7 @@ checkTopLevelRecursiveDefs defs = do
   l <- level
   let varIndex = hashedElemIndex evars'
       unexpose v = fromMaybe (pure v) $ (fmap global . (names Vector.!?)) =<< varIndex v
-      vf :: MetaA -> Infer b
+      vf :: FreeV -> Infer b
       vf v = internalError $ "checkTopLevelRecursiveDefs" PP.<+> shower v PP.<+> shower l
 
   forM (Vector.zip names checkedDefs) $ \(name, (_, def, typ)) -> do

@@ -17,6 +17,7 @@ import Data.Void
 
 import qualified Builtin.Names as Builtin
 import Inference.MetaVar
+import Inference.MetaVar.Zonk
 import Inference.Monad
 import qualified Inference.Normalise as Normalise
 import Inference.Subtype

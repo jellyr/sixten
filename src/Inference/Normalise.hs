@@ -93,7 +93,7 @@ whnfInner
   -> m AbstractM
 whnfInner args expr = case expr of
   Var _ -> return expr
-  Meta m es -> traverseMeta (whnf' args) m es
+  Meta m es -> traverseMetaSolution (whnf' args) m es
   Global g -> do
     (d, _) <- definition g
     case d of
@@ -125,7 +125,7 @@ normalise expr = do
   logMeta 40 "normalise e" expr
   res <- indentLog $ case expr of
     Var _ -> return expr
-    Meta m es -> traverseMeta normalise m es
+    Meta m es -> traverseMetaSolution normalise m es
     Global g -> do
       (d, _) <- definition g
       case d of

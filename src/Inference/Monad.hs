@@ -5,6 +5,7 @@ import Control.Monad.Reader
 import Data.Bifunctor
 import Data.Bitraversable
 import Data.Foldable
+import Data.Monoid
 
 import qualified Builtin.Names as Builtin
 import Inference.MetaVar
@@ -18,7 +19,6 @@ import qualified Util.Tsil as Tsil
 import Util.Tsil(Tsil)
 import VIX
 
-type FreeV = FreeVar Plicitness (Abstract.Expr MetaVar)
 type ConcreteM = Concrete.Expr FreeV
 type AbstractM = Abstract.Expr MetaVar FreeV
 
@@ -70,13 +70,14 @@ exists
   -> Abstract.Expr MetaVar FreeV
   -> Infer AbstractM
 exists hint d typ = do
-  locals <- toVector <$> asks localVariables
+  gen <- freeVar hint d typ
+  locals <- (<> pure gen) . toVector <$> asks localVariables
   let tele = varTelescope locals
       abstr = teleAbstraction locals
       typ' = Abstract.pis tele $ abstract abstr typ
   typ'' <- traverse (error "exists not closed") typ'
   tele' <- traverse (error "exists not closed") tele
-  v <- existsAtLevel hint d tele' typ'' =<< level
+  v <- existsAtLevel hint d tele' typ'' gen =<< level
   return $ Abstract.Meta v $ (\fv -> (varData fv, pure fv)) <$> locals
 
 existsType

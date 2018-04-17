@@ -4,6 +4,7 @@ module Inference.TypeCheck.Definition where
 import Control.Applicative
 import Control.Monad.Except
 import Data.Bifunctor
+import Data.Bitraversable
 import Data.Foldable as Foldable
 import qualified Data.HashMap.Lazy as HashMap
 import qualified Data.HashSet as HashSet
@@ -156,26 +157,32 @@ generaliseDefs mode defs = indentLog $ do
 
   let metas = Vector.zipWith (<>) defMetas typeMetas
 
+      allMetas = fold metas
+
+  forM_ allMetas generalise
+    -- TODO: check that fvs of metaGeneraliser is a subset of the free vars in context
+
   sortedMetas <- forM metas $ \ms -> do
 
     deps <- forM (toList ms) $ \m -> do
-      ds <- metaVars $ metaType m
+      t' <- zonk $ metaType m
+      ds <- metaVars t'
       return (m, ds)
 
     let sortedMs = acyclic <$> topoSort deps
 
-    return [(implicitise $ metaPlicitness m, m) | m <- sortedMs]
+    return [(implicitise $ metaPlicitness m, metaGeneraliser m) | m <- sortedMs]
 
   let lookupMetas = hashedLookup $ Vector.zip vars sortedMetas
       sub v = maybe (pure v) (Abstract.apps (pure v) . fmap (second pure)) $ lookupMetas v
 
   instDefs <- forM defs $ \(v, d, t) -> do
-    d' <- boundM (return . sub) d
-    t' <- bindM (return . sub) t
+    let d' = d >>>= sub
+        t' = t >>= sub
     return (v, d', t')
 
   genDefs <- forM (Vector.zip sortedMetas instDefs) $ \(fvs, (v, d, t)) -> do
-    let (d', t') = abstractDef fvs d t
+    let (d', t') = abstractDef (snd <$> fvs) d t
     return (v, d', t')
 
   newVars <- forM genDefs $ \(v, _, t) ->
@@ -215,7 +222,7 @@ checkRecursiveDefs forceGeneralisation defs = do
   -- Assume that the specified type signatures are correct.
   sigDefs' <- forM sigDefs $ \(evar, (loc, def, typ)) -> do
     typ' <- checkPoly typ Builtin.Type
-    unify [] (metaType evar) typ'
+    unify [] (varType evar) typ'
     return (evar, (loc, def))
 
   -- withVars (fst <$> defs) $ do
@@ -282,18 +289,18 @@ checkAndElabDefs
       )
     )
 checkAndElabDefs defs = indentLog $ do
-  forM_ defs $ \(evar, (_, def)) ->
-    logMeta 20 ("checkAndElabDefs " ++ show (pretty $ fromNameHint "" id $ metaHint evar)) def
+  -- forM_ defs $ \(var, (_, def)) ->
+  --   logMeta 20 ("checkAndElabDefs " ++ show (pretty $ fromNameHint "" id $ varHint var)) def
 
-  checkedDefs <- forM defs $ \(evar, (loc, def)) -> do
-    (def', typ'') <- checkTopLevelDefType evar def loc $ metaType evar
-    return (loc, (evar, def', typ''))
+  checkedDefs <- forM defs $ \(var, (loc, def)) -> do
+    (def', typ'') <- checkTopLevelDefType var def loc $ varType var
+    return (loc, (var, def', typ''))
 
   elabDefs <- elabRecursiveDefs $ snd <$> checkedDefs
 
-  forM_ elabDefs $ \(evar, def, typ) -> do
-    logMeta 20 ("checkAndElabDefs res " ++ show (pretty $ fromNameHint "" id $ metaHint evar)) def
-    logMeta 20 ("checkAndElabDefs res t " ++ show (pretty $ fromNameHint "" id $ metaHint evar)) typ
+--   forM_ elabDefs $ \(var, def, typ) -> do
+--     logMeta 20 ("checkAndElabDefs res " ++ show (pretty $ fromNameHint "" id $ metaHint var)) def
+--     logMeta 20 ("checkAndElabDefs res t " ++ show (pretty $ fromNameHint "" id $ metaHint var)) typ
 
   return elabDefs
 
@@ -331,36 +338,38 @@ checkTopLevelRecursiveDefs defs = do
   let names = (\(v, _, _, _) -> v) <$> defs
 
   checkedDefs <- enterLevel $ do
-    evars <- forM names $ \name -> do
+    vars <- forM names $ \name -> do
       let hint = fromQName name
       typ <- existsType hint
-      forall hint Explicit typ
+      freeVar hint Explicit typ
 
     let nameIndex = hashedElemIndex names
         expose name = case nameIndex name of
           Nothing -> global name
           Just index -> pure
             $ fromMaybe (error "checkTopLevelRecursiveDefs 1")
-            $ evars Vector.!? index
+            $ vars Vector.!? index
 
     let exposedDefs = flip fmap defs $ \(_, loc, def, mtyp) ->
           (loc, gbound expose $ vacuous def, gbind expose . vacuous <$> mtyp)
 
-    checkRecursiveDefs True (Vector.zip evars exposedDefs)
+    checkRecursiveDefs True (Vector.zip vars exposedDefs)
 
-  let evars' = (\(v, _, _) -> v) <$> checkedDefs
+  let vars' = (\(v, _, _) -> v) <$> checkedDefs
 
   l <- level
-  let varIndex = hashedElemIndex evars'
+  let varIndex = hashedElemIndex vars'
       unexpose v = fromMaybe (pure v) $ (fmap global . (names Vector.!?)) =<< varIndex v
       vf :: FreeV -> Infer b
       vf v = internalError $ "checkTopLevelRecursiveDefs" PP.<+> shower v PP.<+> shower l
+      mf :: MetaVar -> Infer b
+      mf v = internalError $ "checkTopLevelRecursiveDefs" PP.<+> shower v PP.<+> shower l
 
   forM (Vector.zip names checkedDefs) $ \(name, (_, def, typ)) -> do
-    unexposedDef <- boundM (pure . unexpose) def
-    unexposedTyp <- bindM (pure . unexpose) typ
-    logMeta 20 ("checkTopLevelRecursiveDefs unexposedDef " ++ show (pretty name)) unexposedDef
+    let unexposedDef = def >>>= unexpose
+        unexposedTyp = typ >>= unexpose
+    -- logMeta 20 ("checkTopLevelRecursiveDefs unexposedDef " ++ show (pretty name)) unexposedDef
     logMeta 20 ("checkTopLevelRecursiveDefs unexposedTyp " ++ show (pretty name)) unexposedTyp
-    unexposedDef' <- traverse vf unexposedDef
-    unexposedTyp' <- traverse vf unexposedTyp
+    unexposedDef' <- bitraverseDefinition mf vf unexposedDef
+    unexposedTyp' <- bitraverse mf vf unexposedTyp
     return (name, unexposedDef', unexposedTyp')

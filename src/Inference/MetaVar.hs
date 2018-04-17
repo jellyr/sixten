@@ -17,6 +17,7 @@ import Data.Void
 import MonadFresh
 import Syntax
 import Syntax.Abstract
+import TypedFreeVar
 import Util
 import VIX
 
@@ -28,12 +29,15 @@ instance Pretty Level where
 
 type MetaRef = STRef RealWorld (Either Level (Expr MetaVar Void))
 
+type FreeV = FreeVar Plicitness (Expr MetaVar)
+
 data MetaVar = MetaVar
-  { metaId  :: !Int
+  { metaId :: !Int
   , metaType :: Expr MetaVar Void
   , metaHint :: !NameHint
   , metaPlicitness :: !Plicitness
   , metaParams :: Telescope Plicitness (Expr MetaVar) Void
+  , metaGeneraliser :: !FreeV
   , metaRef :: !MetaRef
   }
 
@@ -47,11 +51,15 @@ instance Hashable MetaVar where
   hashWithSalt s = hashWithSalt s . metaId
 
 instance Show MetaVar where
-  showsPrec d (MetaVar i t h p ps _) = showParen (d > 10) $
-    showString "Meta" . showChar ' ' . showsPrec 11 i .
-    showChar ' ' . showsPrec 11 t . showChar ' ' . showsPrec 11 h .
-    showChar ' ' . showsPrec 11 p . showChar ' ' . showsPrec 11 ps .
-    showChar ' ' . showString "<Ref>"
+  showsPrec d (MetaVar i t h p ps g _) = showParen (d > 10) $
+    showString "Meta" . showChar ' ' .
+    showsPrec 11 i . showChar ' ' .
+    showsPrec 11 t . showChar ' ' .
+    showsPrec 11 h . showChar ' ' .
+    showsPrec 11 p . showChar ' ' .
+    showsPrec 11 ps . showChar ' ' .
+    showsPrec 11 g . showChar ' ' .
+    showString "<Ref>"
 
 existsAtLevel
   :: (MonadVIX m, MonadIO m)
@@ -59,13 +67,14 @@ existsAtLevel
   -> Plicitness
   -> Telescope Plicitness (Expr MetaVar) Void
   -> Expr MetaVar Void
+  -> FreeV
   -> Level
   -> m MetaVar
-existsAtLevel hint p tele typ l = do
+existsAtLevel hint p tele typ g l = do
   i <- fresh
   ref <- liftST $ newSTRef $ Left l
   logVerbose 20 $ "exists: " <> fromString (show i)
-  return $ MetaVar i typ hint p tele ref
+  return $ MetaVar i typ hint p tele g ref
 
 solution
   :: MonadIO m
@@ -79,6 +88,16 @@ solve
   -> Expr MetaVar Void
   -> m ()
 solve m x = liftST $ writeSTRef (metaRef m) $ Right x
+
+generalise
+  :: MonadIO m
+  => MetaVar
+  -> m ()
+generalise m = do
+  let tele = metaParams m
+  solve m
+    $ lams tele
+    $ toScope $ pure $ B $ TeleVar $ teleLength tele - 1
 
 traverseMetaSolution
   :: MonadIO m

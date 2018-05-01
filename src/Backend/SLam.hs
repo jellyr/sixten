@@ -31,15 +31,15 @@ instance MonadContext FreeV SLam where
   localVars = return mempty
   withVar _ m = m
 
-slamAnno :: Abstract.Expr Void FreeV -> SLam (Anno SLambda.Expr FreeV)
+slamAnno :: AbstractM -> SLam (Anno SLambda.Expr FreeV)
 slamAnno e = Anno <$> slam e <*> (slam =<< whnfExpandingTypeReps =<< typeOf e)
 
-slam :: Abstract.Expr Void FreeV -> SLam (SLambda.Expr FreeV)
+slam :: AbstractM -> SLam (SLambda.Expr FreeV)
 slam expr = do
-  logPretty 20 "slam expr" $ pretty <$> expr
+  logMeta 20 "slam expr" expr
   res <- indentLog $ case expr of
     Abstract.Var v -> return $ SLambda.Var v
-    Abstract.Meta m _ -> absurd m
+    Abstract.Meta _ _ -> error "slam Meta"
     Abstract.Global g -> return $ SLambda.Global g
     Abstract.Lit l -> return $ SLambda.Lit l
     Abstract.Pi {} -> do
@@ -91,10 +91,11 @@ slam expr = do
   return res
 
 slamBranches
-  :: Branches Plicitness (Abstract.Expr Void) FreeV
+  :: Branches Plicitness (Abstract.Expr MetaVar) FreeV
   -> SLam (Branches () SLambda.Expr FreeV)
 slamBranches (ConBranches cbrs) = do
-  logPretty 20 "slamBranches brs" $ pretty <$> ConBranches cbrs
+  -- TODO
+  -- logPretty 20 "slamBranches brs" $ pretty <$> ConBranches cbrs
   cbrs' <- indentLog $ forM cbrs $ \(ConBranch c tele brScope) -> do
     tele' <- forTeleWithPrefixM tele $ \h p s tele' -> do
       let vs = fst <$> tele'
@@ -128,7 +129,7 @@ slamExtern (Extern lang parts)
     TargetMacroPart m -> return $ TargetMacroPart m
 
 slamDef
-  :: Definition (Abstract.Expr Void) FreeV
+  :: Definition (Abstract.Expr MetaVar) FreeV
   -> SLam (Anno SLambda.Expr FreeV)
 slamDef (Definition _ _ e) = slamAnno e
 slamDef (DataDefinition _ e) = slamAnno e

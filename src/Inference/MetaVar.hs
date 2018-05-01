@@ -12,6 +12,7 @@ import Data.STRef
 import Data.String
 import qualified Data.Text.Prettyprint.Doc as PP
 import Data.Vector(Vector)
+import qualified Data.Vector as Vector
 import Data.Void
 
 import MonadFresh
@@ -37,7 +38,6 @@ data MetaVar = MetaVar
   , metaHint :: !NameHint
   , metaPlicitness :: !Plicitness
   , metaParams :: Telescope Plicitness (Expr MetaVar) Void
-  , metaGeneraliser :: !FreeV
   , metaRef :: !MetaRef
   }
 
@@ -51,14 +51,13 @@ instance Hashable MetaVar where
   hashWithSalt s = hashWithSalt s . metaId
 
 instance Show MetaVar where
-  showsPrec d (MetaVar i t h p ps g _) = showParen (d > 10) $
+  showsPrec d (MetaVar i t h p ps _) = showParen (d > 10) $
     showString "Meta" . showChar ' ' .
     showsPrec 11 i . showChar ' ' .
     showsPrec 11 t . showChar ' ' .
     showsPrec 11 h . showChar ' ' .
     showsPrec 11 p . showChar ' ' .
     showsPrec 11 ps . showChar ' ' .
-    showsPrec 11 g . showChar ' ' .
     showString "<Ref>"
 
 existsAtLevel
@@ -67,14 +66,13 @@ existsAtLevel
   -> Plicitness
   -> Telescope Plicitness (Expr MetaVar) Void
   -> Expr MetaVar Void
-  -> FreeV
   -> Level
   -> m MetaVar
-existsAtLevel hint p tele typ g l = do
+existsAtLevel hint p tele typ l = do
   i <- fresh
   ref <- liftST $ newSTRef $ Left l
   logVerbose 20 $ "exists: " <> fromString (show i)
-  return $ MetaVar i typ hint p tele g ref
+  return $ MetaVar i typ hint p tele ref
 
 solution
   :: MonadIO m
@@ -88,16 +86,6 @@ solve
   -> Expr MetaVar Void
   -> m ()
 solve m x = liftST $ writeSTRef (metaRef m) $ Right x
-
-generalise
-  :: MonadIO m
-  => MetaVar
-  -> m ()
-generalise m = do
-  let tele = metaParams m
-  solve m
-    $ lams tele
-    $ toScope $ pure $ B $ TeleVar $ teleLength tele - 1
 
 traverseMetaSolution
   :: MonadIO m
@@ -150,3 +138,86 @@ logMeta v s e = whenVerbose v $ do
   i <- liftVIX $ gets vixIndent
   d <- prettyMeta e
   VIX.log $ mconcat (replicate i "| ") <> "--" <> fromString s <> ": " <> showWide d
+
+gatherDefMetas
+  :: MonadFresh m
+  => Vector FreeV
+  -> Definition (Expr MetaVar) FreeV
+  -> m (Definition (Expr MetaVar) FreeV)
+gatherDefMetas outerVars def = case def of
+  Definition a i e -> Definition a i <$> gatherExprMetas outerVars e
+  DataDefinition d t -> uncurry DataDefinition <$> gatherDataDefMetas outerVars d t
+
+gatherDataDefMetas
+  :: MonadFresh m
+  => Vector FreeV
+  -> DataDef (Expr MetaVar) FreeV
+  -> Expr MetaVar FreeV
+  -> m (DataDef (Expr MetaVar) FreeV, Expr MetaVar FreeV)
+gatherDataDefMetas outerVars (DataDef cs) typ = do
+  typ' <- gatherExprMetas outerVars typ
+
+  vs <- forTeleWithPrefixM (telescope typ') $ \h p s vs -> do
+    let t = instantiateTele pure vs s
+    freeVar h p t
+
+  let abstr = teleAbstraction vs
+
+  cs' <- forM cs $ \(ConstrDef c s) -> do
+    e <- gatherExprMetas outerVars $ instantiateTele pure vs s
+    return $ ConstrDef c $ abstract abstr e
+
+  return (DataDef cs', typ')
+
+gatherExprMetas
+  :: MonadFresh m
+  => Vector FreeV
+  -> Expr MetaVar FreeV
+  -> m (Expr MetaVar FreeV)
+gatherExprMetas outerVars expr = case expr of
+  Var _ -> return expr
+  Meta m vs -> undefined
+  Global _ -> return expr
+  Con _ -> return expr
+  Lit _ -> return expr
+  Pi h p t s -> do
+    t' <- gatherExprMetas outerVars t
+    v <- freeVar h p t'
+    let e = instantiate1 (pure v) s
+    e' <- gatherExprMetas outerVars e
+    let s' = abstract1 v e'
+    return $ Pi h p t' s'
+  Lam h p t s -> do
+    t' <- gatherExprMetas outerVars t
+    v <- freeVar h p t'
+    let e = instantiate1 (pure v) s
+    e' <- gatherExprMetas outerVars e
+    let s' = abstract1 v e'
+    return $ Pi h p t' s'
+  App e1 p e2 -> App <$> gatherExprMetas outerVars e1 <*> pure p <*> gatherExprMetas outerVars e2
+  Let ds scope -> do
+    vs <- forMLet ds $ \h _ t -> do
+      t' <- gatherExprMetas outerVars t
+      freeVar h Explicit t'
+    let abstr = letAbstraction vs
+    ds' <- iforMLet ds $ \i h s _ -> do
+      let e = instantiateLet pure vs s
+      e' <- gatherExprMetas outerVars e
+      let v = vs Vector.! i
+          s' = abstract abstr e'
+      return $ LetBinding h s' $ varType v
+    let e = instantiateLet pure vs scope
+    e' <- gatherExprMetas outerVars e
+    let scope' = abstract abstr e'
+    return $ Let (LetRec ds') scope'
+  Case e brs t -> Case <$> gatherExprMetas outerVars e <*> gatherBranchMetas outerVars brs <*> gatherExprMetas outerVars t
+  ExternCode e t -> ExternCode <$> mapM (gatherExprMetas outerVars) e <*> gatherExprMetas outerVars t
+
+gatherBranchMetas
+  :: MonadFresh m
+  => Vector FreeV
+  -> Branches Plicitness (Expr MetaVar) FreeV
+  -> m (Branches Plicitness (Expr MetaVar) FreeV)
+gatherBranchMetas outerVars brs = case brs of
+  ConBranches cbrs -> _
+  LitBranches lbrs def -> _

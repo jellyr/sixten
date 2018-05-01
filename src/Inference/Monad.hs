@@ -70,14 +70,13 @@ exists
   -> Abstract.Expr MetaVar FreeV
   -> Infer AbstractM
 exists hint d typ = do
-  gen <- freeVar hint d typ
-  locals <- (<> pure gen) . toVector <$> asks localVariables
+  locals <- asks $ toVector . localVariables
   let tele = varTelescope locals
       abstr = teleAbstraction locals
       typ' = Abstract.pis tele $ abstract abstr typ
   typ'' <- traverse (error "exists not closed") typ'
   tele' <- traverse (error "exists not closed") tele
-  v <- existsAtLevel hint d tele' typ'' gen =<< level
+  v <- existsAtLevel hint d tele' typ'' =<< level
   return $ Abstract.Meta v $ (\fv -> (varData fv, pure fv)) <$> locals
 
 existsType

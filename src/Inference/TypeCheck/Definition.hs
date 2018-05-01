@@ -159,7 +159,7 @@ generaliseDefs mode defs = indentLog $ do
 
       allMetas = fold metas
 
-  forM_ allMetas generalise
+  -- forM_ allMetas generalise
     -- TODO: check that fvs of metaGeneraliser is a subset of the free vars in context
 
   sortedMetas <- forM metas $ \ms -> do

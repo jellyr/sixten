@@ -69,7 +69,7 @@ elabUnsolvedConstraint mkConstraint typ = case typ of
 -- from the new variables to the old meta variables.
 universalise :: AbstractM -> Infer (AbstractM, HashMap FreeV MetaVar)
 universalise typ = undefined -- TODO
-  -- second snd <$> runStateT (bindMeta go typ) mempty
+  -- second snd <$> runStateT (bindMetas go typ) mempty
   -- where
   --   go v es = do
   --     (ltr, rtl) <- get
@@ -81,7 +81,7 @@ universalise typ = undefined -- TODO
   --       Just v' -> return $ pure v'
 
 deuniversalise :: HashMap FreeV MetaVar -> AbstractM -> Infer AbstractM
-deuniversalise rtl = bindMeta go
+deuniversalise rtl = bindMetas go
   where
     go v = undefined -- TODO -- return $ pure $ fromMaybe v $ HashMap.lookup v rtl
 

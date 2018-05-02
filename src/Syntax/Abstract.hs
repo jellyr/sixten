@@ -169,30 +169,30 @@ instance Bitraversable Expr where
     Case e brs retType -> Case <$> bitraverse f g e <*> bitraverseBranches f g brs <*> bitraverse f g retType
     ExternCode c t -> ExternCode <$> traverse (bitraverse f g) c <*> bitraverse f g t
 
-bindMeta
+bindMetas
   :: Monad f
   => (forall a. meta -> Vector (Plicitness, Expr meta' a) -> f (Expr meta' a))
   -> Expr meta v
   -> f (Expr meta' v)
-bindMeta f expr = case expr of
+bindMetas f expr = case expr of
   Var v -> pure $ Var v
-  Meta m es -> f m =<< traverse (traverse $ bindMeta f) es
+  Meta m es -> f m =<< traverse (traverse $ bindMetas f) es
   Global v -> pure $ Global v
   Con c -> pure $ Con c
   Lit l -> pure $ Lit l
-  Pi h a t s -> Pi h a <$> bindMeta f t <*> transverseScope (bindMeta f) s
-  Lam h a t s -> Lam h a <$> bindMeta f t <*> transverseScope (bindMeta f) s
-  App e1 a e2 -> App <$> bindMeta f e1 <*> pure a <*> bindMeta f e2
-  Let ds scope -> Let <$> transverseLet (bindMeta f) ds <*> transverseScope (bindMeta f) scope
-  Case e brs retType -> Case <$> bindMeta f e <*> transverseBranches (bindMeta f) brs <*> bindMeta f retType
-  ExternCode c t -> ExternCode <$> traverse (bindMeta f) c <*> bindMeta f t
+  Pi h a t s -> Pi h a <$> bindMetas f t <*> transverseScope (bindMetas f) s
+  Lam h a t s -> Lam h a <$> bindMetas f t <*> transverseScope (bindMetas f) s
+  App e1 a e2 -> App <$> bindMetas f e1 <*> pure a <*> bindMetas f e2
+  Let ds scope -> Let <$> transverseLet (bindMetas f) ds <*> transverseScope (bindMetas f) scope
+  Case e brs retType -> Case <$> bindMetas f e <*> transverseBranches (bindMetas f) brs <*> bindMetas f retType
+  ExternCode c t -> ExternCode <$> traverse (bindMetas f) c <*> bindMetas f t
 
-bindMeta_
+bindMetas_
   :: Monad f
   => (meta -> f ())
   -> Expr meta v
   -> f ()
-bindMeta_ f = void . bindMeta (\m es -> const (Meta m es) <$> f m)
+bindMetas_ f = void . bindMetas (\m es -> const (Meta m es) <$> f m)
 
 instance (v ~ Doc, Pretty m, Eq m) => Pretty (Expr m v) where
   prettyM expr = case expr of

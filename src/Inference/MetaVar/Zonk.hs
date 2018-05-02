@@ -29,24 +29,24 @@ import Util
 import VIX
 
 zonk :: MonadIO m => Expr MetaVar v -> m (Expr MetaVar v)
-zonk = bindMeta $ \m es -> do
+zonk = bindMetas $ \m es -> do
   sol <- solution m
   case sol of
     Left _ -> return $ Meta m es
     Right e -> return $ betaApps (vacuous e) es
 
 metaVars :: MonadIO m => Expr MetaVar v -> m (HashSet MetaVar)
-metaVars expr = execStateT (bindMeta_ go expr) mempty
+metaVars expr = execStateT (bindMetas_ go expr) mempty
   where
     go m = do
       visited <- get
       unless (m `HashSet.member` visited) $ do
         put $ HashSet.insert m visited
-        bindMeta_ go $ metaType m
+        bindMetas_ go $ metaType m
         sol <- solution m
         case sol of
           Left _ -> return ()
-          Right e -> bindMeta_ go e
+          Right e -> bindMetas_ go e
 
 definitionMetaVars
   :: MonadIO m

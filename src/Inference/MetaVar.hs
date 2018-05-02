@@ -139,85 +139,107 @@ logMeta v s e = whenVerbose v $ do
   d <- prettyMeta e
   VIX.log $ mconcat (replicate i "| ") <> "--" <> fromString s <> ": " <> showWide d
 
-gatherDefMetas
-  :: MonadFresh m
-  => Vector FreeV
-  -> Definition (Expr MetaVar) FreeV
-  -> m (Definition (Expr MetaVar) FreeV)
-gatherDefMetas outerVars def = case def of
-  Definition a i e -> Definition a i <$> gatherExprMetas outerVars e
-  DataDefinition d t -> uncurry DataDefinition <$> gatherDataDefMetas outerVars d t
+type FreeBindVar meta = FreeVar Plicitness (Expr meta)
 
-gatherDataDefMetas
+-- TODO move?
+bindDefMetasF
   :: MonadFresh m
-  => Vector FreeV
-  -> DataDef (Expr MetaVar) FreeV
-  -> Expr MetaVar FreeV
-  -> m (DataDef (Expr MetaVar) FreeV, Expr MetaVar FreeV)
-gatherDataDefMetas outerVars (DataDef cs) typ = do
-  typ' <- gatherExprMetas outerVars typ
+  => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta)) -> m (Expr meta' (FreeBindVar meta)))
+  -> Definition (Expr meta) (FreeBindVar meta)
+  -> m (Definition (Expr meta') (FreeBindVar meta))
+bindDefMetasF f def = case def of
+  Definition a i e -> Definition a i <$> bindMetasF f e
+  DataDefinition d t -> uncurry DataDefinition <$> bindDataDefMetasF f d t
 
-  vs <- forTeleWithPrefixM (telescope typ') $ \h p s vs -> do
+bindDataDefMetasF
+  :: MonadFresh m
+  => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta)) -> m (Expr meta' (FreeBindVar meta)))
+  -> DataDef (Expr meta) (FreeBindVar meta)
+  -> Expr meta (FreeBindVar meta)
+  -> m (DataDef (Expr meta') (FreeBindVar meta), Expr meta' (FreeBindVar meta))
+bindDataDefMetasF f (DataDef cs) typ = do
+  vs <- forTeleWithPrefixM (telescope typ) $ \h p s vs -> do
     let t = instantiateTele pure vs s
     freeVar h p t
 
   let abstr = teleAbstraction vs
 
   cs' <- forM cs $ \(ConstrDef c s) -> do
-    e <- gatherExprMetas outerVars $ instantiateTele pure vs s
+    e <- bindMetasF f $ instantiateTele pure vs s
     return $ ConstrDef c $ abstract abstr e
+
+  typ' <- bindMetasF f typ
 
   return (DataDef cs', typ')
 
-gatherExprMetas
+bindMetasF
   :: MonadFresh m
-  => Vector FreeV
-  -> Expr MetaVar FreeV
-  -> m (Expr MetaVar FreeV)
-gatherExprMetas outerVars expr = case expr of
-  Var _ -> return expr
-  Meta m vs -> undefined
-  Global _ -> return expr
-  Con _ -> return expr
-  Lit _ -> return expr
+  => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta)) -> m (Expr meta' (FreeBindVar meta)))
+  -> Expr meta (FreeBindVar meta)
+  -> m (Expr meta' (FreeBindVar meta))
+bindMetasF f expr = case expr of
+  Var v -> return $ Var v
+  Meta m vs -> f m vs
+  Global g -> return $ Global g
+  Con c -> return $ Con c
+  Lit l -> return $ Lit l
   Pi h p t s -> do
-    t' <- gatherExprMetas outerVars t
-    v <- freeVar h p t'
+    v <- freeVar h p t
+    t' <- bindMetasF f t
     let e = instantiate1 (pure v) s
-    e' <- gatherExprMetas outerVars e
+    e' <- bindMetasF f e
     let s' = abstract1 v e'
     return $ Pi h p t' s'
   Lam h p t s -> do
-    t' <- gatherExprMetas outerVars t
-    v <- freeVar h p t'
+    v <- freeVar h p t
+    t' <- bindMetasF f t
     let e = instantiate1 (pure v) s
-    e' <- gatherExprMetas outerVars e
+    e' <- bindMetasF f e
     let s' = abstract1 v e'
     return $ Pi h p t' s'
-  App e1 p e2 -> App <$> gatherExprMetas outerVars e1 <*> pure p <*> gatherExprMetas outerVars e2
+  App e1 p e2 -> App <$> bindMetasF f e1 <*> pure p <*> bindMetasF f e2
   Let ds scope -> do
-    vs <- forMLet ds $ \h _ t -> do
-      t' <- gatherExprMetas outerVars t
-      freeVar h Explicit t'
+    vs <- forMLet ds $ \h _ t -> freeVar h Explicit t
     let abstr = letAbstraction vs
-    ds' <- iforMLet ds $ \i h s _ -> do
+    ds' <- iforMLet ds $ \i h s t -> do
+      t' <- bindMetasF f t
       let e = instantiateLet pure vs s
-      e' <- gatherExprMetas outerVars e
-      let v = vs Vector.! i
-          s' = abstract abstr e'
-      return $ LetBinding h s' $ varType v
+      e' <- bindMetasF f e
+      let s' = abstract abstr e'
+      return $ LetBinding h s' t'
     let e = instantiateLet pure vs scope
-    e' <- gatherExprMetas outerVars e
+    e' <- bindMetasF f e
     let scope' = abstract abstr e'
     return $ Let (LetRec ds') scope'
-  Case e brs t -> Case <$> gatherExprMetas outerVars e <*> gatherBranchMetas outerVars brs <*> gatherExprMetas outerVars t
-  ExternCode e t -> ExternCode <$> mapM (gatherExprMetas outerVars) e <*> gatherExprMetas outerVars t
+  Case e brs t -> Case <$> bindMetasF f e <*> gatherBranchMetas f brs <*> bindMetasF f t
+  ExternCode e t -> ExternCode <$> mapM (bindMetasF f) e <*> bindMetasF f t
 
 gatherBranchMetas
   :: MonadFresh m
-  => Vector FreeV
-  -> Branches Plicitness (Expr MetaVar) FreeV
-  -> m (Branches Plicitness (Expr MetaVar) FreeV)
-gatherBranchMetas outerVars brs = case brs of
-  ConBranches cbrs -> _
-  LitBranches lbrs def -> _
+  => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta)) -> m (Expr meta' (FreeBindVar meta)))
+  -> Branches Plicitness (Expr meta) (FreeBindVar meta)
+  -> m (Branches Plicitness (Expr meta') (FreeBindVar meta))
+gatherBranchMetas f brs = case brs of
+  ConBranches cbrs -> ConBranches <$> do
+    forM cbrs $ \(ConBranch c tele scope) -> do
+      vs <- forTeleWithPrefixM tele $ \h p s vs -> do
+        let t = instantiateTele pure vs s
+        freeVar h p t
+
+      let abstr = teleAbstraction vs
+          e = instantiateTele pure vs scope
+
+      e' <- bindMetasF f e
+      let scope' = abstract abstr e'
+
+      tele' <- forMTele tele $ \h p s -> do
+        let e = instantiateTele pure vs s
+        e' <- bindMetasF f e
+        let s' = abstract abstr e'
+        return $ TeleArg h p s'
+
+      return $ ConBranch c (Telescope tele') scope'
+  LitBranches lbrs def ->
+    LitBranches
+      <$> mapM (\(LitBranch l br) -> LitBranch l <$> bindMetasF f br) lbrs
+      <*> bindMetasF f def

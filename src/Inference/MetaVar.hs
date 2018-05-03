@@ -12,7 +12,6 @@ import Data.STRef
 import Data.String
 import qualified Data.Text.Prettyprint.Doc as PP
 import Data.Vector(Vector)
-import qualified Data.Vector as Vector
 import Data.Void
 
 import MonadFresh
@@ -201,7 +200,7 @@ bindMetasF f expr = case expr of
   Let ds scope -> do
     vs <- forMLet ds $ \h _ t -> freeVar h Explicit t
     let abstr = letAbstraction vs
-    ds' <- iforMLet ds $ \i h s t -> do
+    ds' <- forMLet ds $ \h s t -> do
       t' <- bindMetasF f t
       let e = instantiateLet pure vs s
       e' <- bindMetasF f e
@@ -227,10 +226,10 @@ gatherBranchMetas f brs = case brs of
         freeVar h p t
 
       let abstr = teleAbstraction vs
-          e = instantiateTele pure vs scope
+          expr = instantiateTele pure vs scope
 
-      e' <- bindMetasF f e
-      let scope' = abstract abstr e'
+      expr' <- bindMetasF f expr
+      let scope' = abstract abstr expr'
 
       tele' <- forMTele tele $ \h p s -> do
         let e = instantiateTele pure vs s

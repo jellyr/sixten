@@ -169,30 +169,30 @@ instance Bitraversable Expr where
     Case e brs retType -> Case <$> bitraverse f g e <*> bitraverseBranches f g brs <*> bitraverse f g retType
     ExternCode c t -> ExternCode <$> traverse (bitraverse f g) c <*> bitraverse f g t
 
-bindMetas
+hoistMetas
   :: Monad f
   => (forall a. meta -> Vector (Plicitness, Expr meta' a) -> f (Expr meta' a))
   -> Expr meta v
   -> f (Expr meta' v)
-bindMetas f expr = case expr of
+hoistMetas f expr = case expr of
   Var v -> pure $ Var v
-  Meta m es -> f m =<< traverse (traverse $ bindMetas f) es
+  Meta m es -> f m =<< traverse (traverse $ hoistMetas f) es
   Global v -> pure $ Global v
   Con c -> pure $ Con c
   Lit l -> pure $ Lit l
-  Pi h a t s -> Pi h a <$> bindMetas f t <*> transverseScope (bindMetas f) s
-  Lam h a t s -> Lam h a <$> bindMetas f t <*> transverseScope (bindMetas f) s
-  App e1 a e2 -> App <$> bindMetas f e1 <*> pure a <*> bindMetas f e2
-  Let ds scope -> Let <$> transverseLet (bindMetas f) ds <*> transverseScope (bindMetas f) scope
-  Case e brs retType -> Case <$> bindMetas f e <*> transverseBranches (bindMetas f) brs <*> bindMetas f retType
-  ExternCode c t -> ExternCode <$> traverse (bindMetas f) c <*> bindMetas f t
+  Pi h a t s -> Pi h a <$> hoistMetas f t <*> transverseScope (hoistMetas f) s
+  Lam h a t s -> Lam h a <$> hoistMetas f t <*> transverseScope (hoistMetas f) s
+  App e1 a e2 -> App <$> hoistMetas f e1 <*> pure a <*> hoistMetas f e2
+  Let ds scope -> Let <$> transverseLet (hoistMetas f) ds <*> transverseScope (hoistMetas f) scope
+  Case e brs retType -> Case <$> hoistMetas f e <*> transverseBranches (hoistMetas f) brs <*> hoistMetas f retType
+  ExternCode c t -> ExternCode <$> traverse (hoistMetas f) c <*> hoistMetas f t
 
-bindMetas_
+hoistMetas_
   :: Monad f
   => (meta -> f ())
   -> Expr meta v
   -> f ()
-bindMetas_ f = void . bindMetas (\m es -> const (Meta m es) <$> f m)
+hoistMetas_ f = void . hoistMetas (\m es -> const (Meta m es) <$> f m)
 
 instance (v ~ Doc, Pretty m, Eq m) => Pretty (Expr m v) where
   prettyM expr = case expr of

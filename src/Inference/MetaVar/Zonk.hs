@@ -2,7 +2,6 @@
 module Inference.MetaVar.Zonk where
 
 import Control.Monad.Except
-import Control.Monad.ST
 import Control.Monad.State
 import Data.Bifoldable
 import Data.Bitraversable
@@ -29,24 +28,24 @@ import Util
 import VIX
 
 zonk :: MonadIO m => Expr MetaVar v -> m (Expr MetaVar v)
-zonk = bindMetas $ \m es -> do
+zonk = hoistMetas $ \m es -> do
   sol <- solution m
   case sol of
     Left _ -> return $ Meta m es
     Right e -> return $ betaApps (vacuous e) es
 
 metaVars :: MonadIO m => Expr MetaVar v -> m (HashSet MetaVar)
-metaVars expr = execStateT (bindMetas_ go expr) mempty
+metaVars expr = execStateT (hoistMetas_ go expr) mempty
   where
     go m = do
       visited <- get
       unless (m `HashSet.member` visited) $ do
         put $ HashSet.insert m visited
-        bindMetas_ go $ metaType m
+        hoistMetas_ go $ metaType m
         sol <- solution m
         case sol of
           Left _ -> return ()
-          Right e -> bindMetas_ go e
+          Right e -> hoistMetas_ go e
 
 definitionMetaVars
   :: MonadIO m

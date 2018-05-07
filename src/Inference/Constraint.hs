@@ -81,7 +81,7 @@ universalise typ = undefined -- TODO
   --       Just v' -> return $ pure v'
 
 deuniversalise :: HashMap FreeV MetaVar -> AbstractM -> Infer AbstractM
-deuniversalise rtl = bindMetas go
+deuniversalise rtl = go
   where
     go v = undefined -- TODO -- return $ pure $ fromMaybe v $ HashMap.lookup v rtl
 

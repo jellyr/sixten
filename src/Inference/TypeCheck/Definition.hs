@@ -1,8 +1,9 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
 module Inference.TypeCheck.Definition where
 
 import Control.Applicative
 import Control.Monad.Except
+import Control.Monad.State
 import Data.Bifunctor
 import Data.Bitraversable
 import Data.Foldable as Foldable
@@ -17,6 +18,7 @@ import qualified Data.Vector as Vector
 import Data.Void
 
 import {-# SOURCE #-} Inference.TypeCheck.Expr
+import Analysis.Simplify
 import qualified Builtin.Names as Builtin
 import Inference.Constraint
 import Inference.Cycle
@@ -123,26 +125,42 @@ generaliseDefs mode defs = indentLog $ do
 
       typeFreeVars = MultiHashMap.fromMultiList [(v, foldMap HashSet.singleton t) | (v, _, t) <- Vector.toList defs]
 
+  locals <- localVars
+
+  outerLevel <- level
+
   defVars <- case mode of
     GeneraliseType -> return mempty
     GeneraliseAll -> forM defs $ \(v, def, _) -> do
       let fvs = foldMap HashSet.singleton def
-      metas <- definitionMetaVars def
+          go m es = do
+            sol <- solution m
+            case sol of
+              Right e -> return $ betaApps (vacuous e) es
+              Left l
+                | l < outerLevel -> return $ Abstract.Meta m es
+                | otherwise -> do
+                  s <- get
+                  case HashMap.lookup m s of
+                    Nothing -> do
+                      let Just typ = Abstract.typeApps (vacuous $ metaType m) es
+                          typFreeVars = foldMap HashSet.singleton typ
+                      _ typ
+                    Just e -> return $ Abstract.apps e es
+      (_, metas) <- runStateT (bindDefMetas _ def) mempty
       return (v, (fvs, metas))
 
   typeVars <- forM defs $ \(v, _, typ) -> do
     let fvs = foldMap HashSet.singleton typ
-    metas <- metaVars typ
+    (_, metas) <- runStateT (bindMetas _ typ) _
     return (v, (fvs, metas))
 
   mergeConstraintVars $ HashSet.unions $ toList $ snd . snd <$> defVars <> typeVars
 
-  l <- level
-
   let isLocalConstraint m@MetaVar { metaPlicitness = Constraint } = isLocalMeta m
       isLocalConstraint _ = return False
 
-      isLocalMeta m = either (>= l) (const False) <$> solution m
+      isLocalMeta m = either (>= outerLevel) (const False) <$> solution m
 
   let satDefVars = saturateMap fst $ toHashMap defVars
       satTypeVars = saturateMap fst $ toHashMap typeVars
@@ -162,6 +180,9 @@ generaliseDefs mode defs = indentLog $ do
   -- forM_ allMetas generalise
     -- TODO: check that fvs of metaGeneraliser is a subset of the free vars in context
 
+  metaGeneralisers <- forM allMetas $ \m ->
+    freeVar (metaHint m) (metaPlicitness m) (_ $ metaType m)
+
   sortedMetas <- forM metas $ \ms -> do
 
     deps <- forM (toList ms) $ \m -> do
@@ -171,7 +192,7 @@ generaliseDefs mode defs = indentLog $ do
 
     let sortedMs = acyclic <$> topoSort deps
 
-    return [(implicitise $ metaPlicitness m, metaGeneraliser m) | m <- sortedMs]
+    return [(implicitise $ metaPlicitness m, v) | m <- sortedMs]
 
   let lookupMetas = hashedLookup $ Vector.zip vars sortedMetas
       sub v = maybe (pure v) (Abstract.apps (pure v) . fmap (second pure)) $ lookupMetas v

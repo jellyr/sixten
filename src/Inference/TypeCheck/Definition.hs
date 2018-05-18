@@ -147,12 +147,12 @@ generaliseDefs mode defs = indentLog $ do
                           typFreeVars = foldMap HashSet.singleton typ
                       _ typ
                     Just e -> return $ Abstract.apps e es
-      (_, metas) <- runStateT (bindDefMetas _ def) mempty
+      (_, metas) <- runStateT (bindDefMetas' _ def) mempty
       return (v, (fvs, metas))
 
   typeVars <- forM defs $ \(v, _, typ) -> do
     let fvs = foldMap HashSet.singleton typ
-    (_, metas) <- runStateT (bindMetas _ typ) _
+    (_, metas) <- runStateT (bindMetas' _ typ) _
     return (v, (fvs, metas))
 
   mergeConstraintVars $ HashSet.unions $ toList $ snd . snd <$> defVars <> typeVars

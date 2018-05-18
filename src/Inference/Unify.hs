@@ -14,6 +14,7 @@ import qualified Data.Text.Prettyprint.Doc as PP
 import qualified Data.Vector as Vector
 import Data.Void
 
+import Analysis.Simplify
 import Inference.MetaVar
 import Inference.MetaVar.Zonk
 import Inference.Monad
@@ -67,29 +68,36 @@ occurs cxt l mv expr = bitraverse_ go pure expr
           Left l' -> liftST $ writeSTRef (metaRef mv') $ Left $ min l l'
           Right expr' -> traverse_ go $ vacuous expr'
 
-prune :: HashSet FreeV -> AbstractM -> Infer ()
-prune allowed expr = case expr of
-  Var _ -> return ()
-  Meta m (distinctVars -> Just vs) -> do
-    let vs' = Vector.filter (`HashSet.member` allowed) vs
-    undefined
-  Meta _ es -> mapM_ (prune allowed . snd) es
-  Global _ -> return ()
-  Con _ -> return ()
-  Lit _ -> return ()
-  Pi h p t s -> absCase h p t s
-  Lam h p t s -> absCase h p t s
-  App e1 _ e2 -> do
-    prune allowed e1
-    prune allowed e2
-  Let _ _ -> return () -- TODO
-  Case _ _ _ -> return () -- TODO
-  ExternCode _ _ -> return () -- TODO
-  where
-    absCase h p t s = do
-      prune allowed t
-      v <- freeVar h p t
-      prune (HashSet.insert v allowed) $ instantiate1 (pure v) s
+prune :: HashSet FreeV -> AbstractM -> Infer AbstractM
+prune allowed expr = do
+  outerContext <- toHashSet <$> localVars
+  let go m es = do
+        sol <- solution m
+        case sol of
+          Right e -> bindMetas go $ betaApps (vacuous e) es
+          Left l -> do
+            innerContext <- toHashSet <$> localVars
+            case distinctVars es of
+              Nothing -> return $ Meta m es
+              Just vs
+                | Vector.length vs' == Vector.length vs -> return $ Meta m es
+                | otherwise -> do
+                  let m'Type = pis (teleAbstraction pure vs') mType
+                  m'Type' <- bindMetas go m'Type
+                  let typeFvs = foldMap HashSet.singleton m'Type'
+                  if HashSet.null typeFvs then do
+                    m' <- existsAtLevel (metaHint m) (metaPlicitness m) mType' l
+                    solve m $ _
+                    return $ Meta m' $ pure <$> vs'
+                  else
+                    return $ Meta m es
+                | otherwise -> return $ Meta m es
+                where
+                  allowed' = allowed <> innerContext `HashSet.difference` outerContext
+                  vs' = Vector.filter (`HashSet.member` allowed') vs
+                  mType = typeApps (vacuous $ metaType m) es
+
+  bindMetas go expr
 
 unify :: [(AbstractM, AbstractM)] -> AbstractM -> AbstractM -> Infer ()
 unify cxt type1 type2 = do
@@ -103,7 +111,9 @@ unify' :: [(AbstractM, AbstractM)] -> AbstractM -> AbstractM -> Infer ()
 unify' cxt type1 type2
   | type1 == type2 = return () -- TODO make specialised equality function to get rid of zonking in this and subtyping
   | otherwise = case (type1, type2) of
-    -- TODO what to do with equal metavariables with different args?
+    -- TODO Handle same metavariable with different args
+    -- See Higher-Order Dynamic Pattern Unification for Dependent Types and Records
+
     -- If we have 'unify (f xs) t', where 'f' is an existential, and 'xs' are
     -- distinct universally quantified variables, then 'f = \xs. t' is a most
     -- general solution (see Miller, Dale (1991) "A Logic programming...")
@@ -139,8 +149,7 @@ unify' cxt type1 type2
       sol <- solution m
       case sol of
         Left l -> do
-          prune (toHashSet vs) t
-          t' <- zonk =<< normalise t
+          t' <- normalise =<< prune (toHashSet vs) t
           occurs cxt l m t'
           let tele = varTelescope vs
               abstr = teleAbstraction vs

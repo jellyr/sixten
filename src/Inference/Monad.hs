@@ -75,8 +75,7 @@ exists hint d typ = do
       abstr = teleAbstraction locals
       typ' = Abstract.pis tele $ abstract abstr typ
   typ'' <- traverse (error "exists not closed") typ'
-  tele' <- traverse (error "exists not closed") tele
-  v <- existsAtLevel hint d tele' typ'' =<< level
+  v <- existsAtLevel hint d typ'' =<< level
   return $ Abstract.Meta v $ (\fv -> (varData fv, pure fv)) <$> locals
 
 existsType

@@ -82,20 +82,28 @@ prune allowed expr = do
               Just vs
                 | Vector.length vs' == Vector.length vs -> return $ Meta m es
                 | otherwise -> do
-                  let m'Type = pis (teleAbstraction pure vs') mType
+                  let m'Type = pis (varTelescope vs') $ abstract (teleAbstraction vs') mType
                   m'Type' <- bindMetas go m'Type
-                  let typeFvs = foldMap HashSet.singleton m'Type'
+                  let typeFvs = toHashSet m'Type'
                   if HashSet.null typeFvs then do
-                    m' <- existsAtLevel (metaHint m) (metaPlicitness m) mType' l
-                    solve m $ _
-                    return $ Meta m' $ pure <$> vs'
+                    m' <- existsAtLevel
+                      (metaHint m)
+                      (metaPlicitness m)
+                      (assertClosed m'Type')
+                      (Vector.length vs')
+                      l
+                    let e = Meta m' $ (\v -> (varData v, pure v)) <$> vs'
+                    solve m $ assertClosed $ lams (varTelescope vs) $ abstract (teleAbstraction vs) e
+                    return e
                   else
                     return $ Meta m es
                 | otherwise -> return $ Meta m es
                 where
+                  assertClosed :: Functor f => f FreeV -> f Void
+                  assertClosed = fmap $ error "prune assertClosed"
                   allowed' = allowed <> innerContext `HashSet.difference` outerContext
                   vs' = Vector.filter (`HashSet.member` allowed') vs
-                  mType = typeApps (vacuous $ metaType m) es
+                  Just mType = typeApps (vacuous $ metaType m) es
 
   bindMetas go expr
 

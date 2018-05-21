@@ -130,7 +130,7 @@ extractExtern
 extractExtern retType (Extern C parts) = do
   tgt <- gets target
 
-  let freeVars = foldMap (foldMap $ foldMap HashSet.singleton) parts
+  let freeVars = foldMap (foldMap toHashSet) parts
       argNames =
         [ (v, "extern_arg_" <> shower n <> fromNameHint mempty (("_" <>) . fromName) (varHint v))
         | (v, n) <- zip (HashSet.toList freeVars) [(0 :: Int)..]

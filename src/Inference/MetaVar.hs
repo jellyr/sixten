@@ -7,6 +7,8 @@ import Control.Monad.State
 import Data.Bitraversable
 import Data.Function
 import Data.Hashable
+import qualified Data.HashMap.Lazy as HashMap
+import qualified Data.HashSet as HashSet
 import Data.Monoid
 import Data.STRef
 import Data.String
@@ -36,6 +38,7 @@ type FreeV = FreeVar Plicitness (Expr MetaVar)
 data MetaVar = MetaVar
   { metaId :: !Int
   , metaType :: Expr MetaVar Void
+  , metaArity :: !Int
   , metaHint :: !NameHint
   , metaPlicitness :: !Plicitness
   , metaRef :: !MetaRef
@@ -51,10 +54,11 @@ instance Hashable MetaVar where
   hashWithSalt s = hashWithSalt s . metaId
 
 instance Show MetaVar where
-  showsPrec d (MetaVar i t h p _) = showParen (d > 10) $
+  showsPrec d (MetaVar i t a h p _) = showParen (d > 10) $
     showString "Meta" . showChar ' ' .
     showsPrec 11 i . showChar ' ' .
     showsPrec 11 t . showChar ' ' .
+    showsPrec 11 a . showChar ' ' .
     showsPrec 11 h . showChar ' ' .
     showsPrec 11 p . showChar ' ' .
     showString "<Ref>"
@@ -64,13 +68,14 @@ existsAtLevel
   => NameHint
   -> Plicitness
   -> Expr MetaVar Void
+  -> Int
   -> Level
   -> m MetaVar
-existsAtLevel hint p typ l = do
+existsAtLevel hint p typ a l = do
   i <- fresh
   ref <- liftST $ newSTRef $ Left l
   logVerbose 20 $ "exists: " <> fromString (show i)
-  return $ MetaVar i typ hint p ref
+  return $ MetaVar i typ a hint p ref
 
 solution
   :: MonadIO m
@@ -155,9 +160,7 @@ bindDefMetas'
   -> Definition (Expr meta) (FreeBindVar meta')
   -> m (Definition (Expr meta') (FreeBindVar meta'))
 bindDefMetas' f = bindDefMetas $ \m es -> do
-  es' <- forM es $ \(p, e) -> do
-    e' <- bindMetas' f e
-    return (p, e')
+  es' <- traverse (traverse $ bindMetas' f) es
   f m es'
 
 bindDataDefMetas
@@ -217,7 +220,7 @@ bindMetas f expr = case expr of
       freeVar h Explicit t'
     let abstr = letAbstraction vs
     withVars vs $ do
-      ds' <- iforMLet ds $ \i h s t -> do
+      ds' <- iforMLet ds $ \i h s _ -> do
         let e = instantiateLet pure vs s
         e' <- bindMetas f e
         let s' = abstract abstr e'
@@ -236,9 +239,7 @@ bindMetas'
   -> Expr meta (FreeBindVar meta')
   -> m (Expr meta' (FreeBindVar meta'))
 bindMetas' f = bindMetas $ \m es -> do
-  es' <- forM es $ \(p, e) -> do
-    e' <- bindMetas' f e
-    return (p, e')
+  es' <- traverse (traverse $ bindMetas' f) es
   f m es'
 
 bindBranchMetas

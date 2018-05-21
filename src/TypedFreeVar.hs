@@ -60,7 +60,7 @@ showFreeVar
   => f (FreeVar d e)
   -> Doc
 showFreeVar x = do
-  let vs = foldMap HashSet.singleton x
+  let vs = toHashSet x
   let shownVars = [(pretty v, pretty $ pretty <$> varType v) | v <- HashSet.toList vs]
   pretty (pretty <$> x)
     <> if null shownVars

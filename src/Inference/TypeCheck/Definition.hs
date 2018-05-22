@@ -20,7 +20,6 @@ import qualified Data.Vector as Vector
 import Data.Void
 
 import {-# SOURCE #-} Inference.TypeCheck.Expr
-import Analysis.Simplify
 import qualified Builtin.Names as Builtin
 import Inference.Constraint
 import Inference.Cycle
@@ -30,13 +29,11 @@ import Inference.Monad
 import Inference.TypeCheck.Clause
 import Inference.TypeCheck.Data
 import Inference.Unify
-import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
 import TypedFreeVar
 import Util
-import qualified Util.MultiHashMap as MultiHashMap
 import Util.TopoSort
 import VIX
 
@@ -111,10 +108,9 @@ generaliseMetas metas = do
 
   flip execStateT mempty $ forM_ sortedMetas $ \(m, (instVs, instTyp, _deps)) -> do
     sub <- get
-    instTyp' <- bindMetas (\m es -> return $ case HashMap.lookup m sub of
-      Nothing -> Abstract.Meta m es
+    instTyp' <- flip bindMetas instTyp $ \m' es -> return $ case HashMap.lookup m' sub of
+      Nothing -> Abstract.Meta m' es
       Just v -> pure v
-      ) instTyp
     let localDeps = toHashSet instTyp' `HashSet.intersection` instVs
     unless (HashSet.null localDeps) $ error "generaliseMetas local deps" -- TODO error message
     v <- freeVar (metaHint m) (metaPlicitness m) instTyp'
@@ -133,6 +129,7 @@ generaliseMetas metas = do
         go vs n (Abstract.Pi h a t s) = do
           v <- freeVar h a t
           go (HashSet.insert v vs) (n - 1) (instantiate1 (pure v) s)
+        go _ _ _ = internalError "instantiatedMetaType"
 
 generaliseDefs
   :: GeneraliseDefsMode
@@ -155,15 +152,34 @@ generaliseDefs mode defs = indentLog $ do
   -- resolved (unresolved class instances are assumed to depend on all
   -- instances), so we can't be sure that we have a single cycle. Therefore we
   -- separately compute dependencies for each definition.
+  zonkedDefs <- forM defs $ \(v, def, typ) -> do
+    def' <- zonkDef def
+    typ' <- zonk typ
+    return (v, def', typ')
+
+  let sortedDefs = topoSortWith fst3 (\(_, d, t) -> toHashSet d <> toHashSet t) zonkedDefs
+
+  genDefs <- mapM (generaliseDefsInner mode . toVector) sortedDefs
+
+  return (Vector.concat $ fst <$> genDefs, appEndo $ mconcat $ Endo . snd <$> genDefs)
+
+generaliseDefsInner
+  :: GeneraliseDefsMode
+  -> Vector
+    ( FreeV
+    , Definition (Abstract.Expr MetaVar) FreeV
+    , AbstractM
+    )
+  -> Infer
+    ( Vector
+      ( FreeV
+      , Definition (Abstract.Expr MetaVar) FreeV
+      , AbstractM
+      )
+    , FreeV -> FreeV
+    )
+generaliseDefsInner mode defs = do
   let vars = (\(v, _, _) -> v) <$> defs
-
-      defFreeVars = case mode of
-        GeneraliseType -> mempty
-        GeneraliseAll -> MultiHashMap.fromMultiList [(v, toHashSet def) | (v, def, _) <- Vector.toList defs]
-
-      typeFreeVars = MultiHashMap.fromMultiList [(v, toHashSet t) | (v, _, t) <- Vector.toList defs]
-
-  outerLocals <- toHashSet <$> localVars
 
   outerLevel <- level
 
@@ -174,49 +190,40 @@ generaliseDefs mode defs = indentLog $ do
 
   defVars <- case mode of
     GeneraliseType -> return mempty
-    GeneraliseAll -> forM defs $ \(v, def, _) -> do
-      let fvs = toHashSet def
-      metas <- filterMSet isLocalConstraint =<< definitionMetaVars def
-      return (v, (fvs, metas))
+    GeneraliseAll -> forM defs $ \(_, def, _) ->
+      filterMSet isLocalConstraint =<< definitionMetaVars def
 
-  typeVars <- forM defs $ \(v, _, typ) -> do
-    let fvs = toHashSet typ
-    metas <- filterMSet isLocalMeta =<< metaVars typ
-    return (v, (fvs, metas))
+  typeVars <- forM defs $ \(_, _, typ) ->
+    filterMSet isLocalMeta =<< metaVars typ
 
-  let satDefVars = saturateMap fst $ toHashMap defVars
-      satTypeVars = saturateMap fst $ toHashMap typeVars
+  let metas = fold $ defVars <> typeVars
 
-  let defAndTypeVars = Vector.zipWith (<>) defVars typeVars
-      metas = fold $ snd . snd <$> defAndTypeVars
+  metas' <- mergeConstraintVars metas
 
-  mergeConstraintVars metas
-  -- forM_ allMetas generalise
-    -- TODO: check that fvs of metaGeneraliser is a subset of the free vars in context
+  metaSub <- generaliseMetas metas'
 
-  metaSub <- generaliseMetas metas
+  let freeVars = HashSet.map (metaSub HashMap.!) metas'
 
-  sortedMetas <- forM defAndTypeVars $ \ms -> do
+  let sortedFreeVars = do
+        let sortedFvs = acyclic <$> topoSortWith id (toHashSet . varType) freeVars
+        [(implicitise $ varData fv, fv) | fv <- sortedFvs]
 
-    deps <- forM (toList ms) $ \m -> do
-      t' <- zonk $ metaType m
-      ds <- metaVars t'
-      return (m, ds)
+  let lookupDef = hashedLookup $ (\v -> (v, Abstract.apps (pure v) $ second pure <$> sortedFreeVars)) <$> vars
+      sub v = fromMaybe (pure v) $ lookupDef v
 
-    let sortedMs = acyclic <$> topoSort deps
+  subbedDefs <- forM defs $ \(v, d, t) -> do
+    d' <- flip bindDefMetas' d $ \m es -> case HashMap.lookup m metaSub of
+      Nothing -> return $ Abstract.Meta m es
+      Just e -> return $ pure e
+    t' <- flip bindMetas' t $ \m es -> case HashMap.lookup m metaSub of
+      Nothing -> return $ Abstract.Meta m es
+      Just e -> return $ pure e
+    let d'' = d' >>>= sub
+        t'' = t' >>= sub
+    return (v, d'', t'')
 
-    return [(implicitise $ metaPlicitness m, v) | m <- sortedMs]
-
-  let lookupMetas = hashedLookup $ Vector.zip vars sortedMetas
-      sub v = maybe (pure v) (Abstract.apps (pure v) . fmap (second pure)) $ lookupMetas v
-
-  instDefs <- forM defs $ \(v, d, t) -> do
-    let d' = d >>>= sub
-        t' = t >>= sub
-    return (v, d', t')
-
-  genDefs <- forM (Vector.zip sortedMetas instDefs) $ \(fvs, (v, d, t)) -> do
-    let (d', t') = abstractDef (snd <$> fvs) d t
+  genDefs <- forM subbedDefs $ \(v, d, t) -> do
+    let (d', t') = abstractDef (snd <$> sortedFreeVars) d t
     return (v, d', t')
 
   newVars <- forM genDefs $ \(v, _, t) ->
@@ -231,7 +238,7 @@ generaliseDefs mode defs = indentLog $ do
   return (newVarDefs, newVarSub)
   where
     acyclic (AcyclicSCC a) = a
-    acyclic (CyclicSCC _) = error "generaliseDefs"
+    acyclic (CyclicSCC _) = error "generaliseDefsInner"
 
 checkRecursiveDefs
   :: Bool

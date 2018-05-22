@@ -2,6 +2,7 @@
 module Processor.File where
 
 import Control.Monad.Except
+import Control.Monad.Identity
 import Control.Monad.State
 import Data.Bifunctor
 import Data.HashMap.Lazy(HashMap)
@@ -51,7 +52,7 @@ process
 process = frontend backend
 
 frontend
-  :: ([(QName, Definition Abstract.Expr Void, Abstract.Expr Void)] -> VIX [k])
+  :: ([(QName, Definition (Abstract.Expr Void) Void, Abstract.Expr Void Void)] -> VIX [k])
   -> Module (HashMap QName (SourceLoc, Unscoped.TopLevelDefinition))
   -> VIX [k]
 frontend k
@@ -72,7 +73,7 @@ frontend k
   >=> k
 
 backend
-  :: [(QName, Definition Abstract.Expr Void, Abstract.Expr Void)]
+  :: [(QName, Definition (Abstract.Expr Void) Void, Abstract.Expr Void Void)]
   -> VIX [Generate.GeneratedSubmodule]
 backend
   = slamGroup
@@ -141,8 +142,8 @@ prettyTypedGroup
   :: Int
   -> Text
   -> (v -> QName)
-  -> [(QName, Definition Abstract.Expr v, Abstract.Expr v)]
-  -> VIX [(QName, Definition Abstract.Expr v, Abstract.Expr v)]
+  -> [(QName, Definition (Abstract.Expr Void) v, Abstract.Expr Void v)]
+  -> VIX [(QName, Definition (Abstract.Expr Void) v, Abstract.Expr Void v)]
 prettyTypedGroup v str f defs = do
   whenVerbose v $ do
     VIX.log $ "----- " <> str <> " -----"
@@ -208,13 +209,13 @@ declassifyGroup xs = do
 
 typeCheckGroup
   :: [(QName, SourceLoc, Concrete.TopLevelPatDefinition Concrete.Expr Void, Maybe (Concrete.Expr Void))]
-  -> VIX [(QName, Definition Abstract.Expr Void, Abstract.Expr Void)]
+  -> VIX [(QName, Definition (Abstract.Expr Void) Void, Abstract.Expr Void Void)]
 typeCheckGroup
   = fmap Vector.toList . TypeCheck.runInfer . TypeCheck.checkTopLevelRecursiveDefs . Vector.fromList
 
 simplifyGroup
-  :: [(QName, Definition Abstract.Expr Void, Abstract.Expr Void)]
-  -> VIX [(QName, Definition Abstract.Expr Void, Abstract.Expr Void)]
+  :: [(QName, Definition (Abstract.Expr Void) Void, Abstract.Expr Void Void)]
+  -> VIX [(QName, Definition (Abstract.Expr Void) Void, Abstract.Expr Void Void)]
 simplifyGroup defs = forM defs $ \(x, def, typ) ->
   return (x, simplifyDef globTerm def, simplifyExpr globTerm 0 typ)
   where
@@ -222,17 +223,17 @@ simplifyGroup defs = forM defs $ \(x, def, typ) ->
     names = HashSet.fromList $ fst3 <$> defs
 
 addGroupToContext
-  :: [(QName, Definition Abstract.Expr Void, Abstract.Expr Void)]
-  -> VIX [(QName, Definition Abstract.Expr Void, Abstract.Expr Void)]
+  :: [(QName, Definition (Abstract.Expr Void) Void, Abstract.Expr Void Void)]
+  -> VIX [(QName, Definition (Abstract.Expr Void) Void, Abstract.Expr Void Void)]
 addGroupToContext defs = do
   addContext $ HashMap.fromList $ (\(n, d, t) -> (n, (d, t))) <$> defs
   return defs
 
 slamGroup
-  :: [(QName, Definition Abstract.Expr Void, Abstract.Expr Void)]
+  :: [(QName, Definition (Abstract.Expr Void) Void, Abstract.Expr Void Void)]
   -> VIX [(QName, Anno SLambda.Expr Void)]
 slamGroup defs = forM defs $ \(x, d, _t) -> do
-  d' <- SLam.runSlam $ SLam.slamDef $ vacuous d
+  d' <- SLam.runSlam $ SLam.slamDef $ hoist (runIdentity . Abstract.hoistMetas absurd) $ vacuous d
   d'' <- traverse (internalError . ("slamGroup" PP.<+>) . shower) d'
   return (x, d'')
 

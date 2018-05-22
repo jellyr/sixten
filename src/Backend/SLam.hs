@@ -6,7 +6,6 @@ import Control.Monad.Except
 import Data.Monoid
 import qualified Data.Text.Prettyprint.Doc as PP
 import qualified Data.Vector as Vector
-import Data.Void
 
 import qualified Builtin.Names as Builtin
 import Inference.MetaVar

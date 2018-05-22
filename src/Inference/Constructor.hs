@@ -8,7 +8,6 @@ import Data.Monoid
 import qualified Data.Text.Prettyprint.Doc as PP
 
 import Inference.Constraint
-import Inference.MetaVar
 import Inference.Monad
 import Syntax
 import qualified Syntax.Abstract as Abstract

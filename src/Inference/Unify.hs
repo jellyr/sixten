@@ -3,8 +3,8 @@ module Inference.Unify where
 
 import Control.Monad.Except
 import Data.Bifoldable
-import Data.Bifunctor
 import Data.Foldable
+import Data.Hashable
 import qualified Data.HashSet as HashSet
 import Data.HashSet(HashSet)
 import Data.List
@@ -113,10 +113,11 @@ unify cxt type1 type2 = do
   logMeta 30 "      t2" type2
   type1' <- zonk =<< whnf type1
   type2' <- zonk =<< whnf type2
-  unify' ((type1', type2') : cxt) type1' type2'
+  touchable <- getTouchable
+  unify' ((type1', type2') : cxt) touchable type1' type2'
 
-unify' :: [(AbstractM, AbstractM)] -> AbstractM -> AbstractM -> Infer ()
-unify' cxt type1 type2
+unify' :: [(AbstractM, AbstractM)] -> (MetaVar -> Bool) -> AbstractM -> AbstractM -> Infer ()
+unify' cxt touchable type1 type2
   | type1 == type2 = return () -- TODO make specialised equality function to get rid of zonking in this and subtyping
   | otherwise = case (type1, type2) of
     -- TODO Handle same metavariable with different args
@@ -125,8 +126,8 @@ unify' cxt type1 type2
     -- If we have 'unify (f xs) t', where 'f' is an existential, and 'xs' are
     -- distinct universally quantified variables, then 'f = \xs. t' is a most
     -- general solution (see Miller, Dale (1991) "A Logic programming...")
-    (Meta m (distinctVars -> Just vs), _) -> solveVar unify m vs type2
-    (_, Meta m (distinctVars -> Just vs)) -> solveVar (flip . unify) m vs type1
+    (Meta m (distinctVars -> Just vs), _) | touchable m -> solveVar unify m vs type2
+    (_, Meta m (distinctVars -> Just vs)) | touchable m -> solveVar (flip . unify) m vs type1
     (Pi h1 p1 t1 s1, Pi h2 p2 t2 s2) | p1 == p2 -> absCase (h1 <> h2) p1 t1 t2 s1 s2
     (Lam h1 p1 t1 s1, Lam h2 p2 t2 s2) | p1 == p2 -> absCase (h1 <> h2) p1 t1 t2 s1 s2
     -- Since we've already tried reducing the application, we can only hope to
@@ -169,10 +170,14 @@ unify' cxt type1 type2
           solve m lamt'
         Right c -> recurse cxt (apps (vacuous c) $ (\v -> (varData v, pure v)) <$> vs) t
 
+distinctVars :: (Eq v, Hashable v, Traversable t) => t (p, Expr m v) -> Maybe (t v)
 distinctVars es = case traverse isVar es of
   Just es' | distinct es' -> Just es'
   _ -> Nothing
 
+isVar :: (p, Expr m a) -> Maybe a
 isVar (_, Var v) = Just v
 isVar _ = Nothing
+
+distinct :: (Foldable t, Hashable a, Eq a) => t a -> Bool
 distinct es = HashSet.size (toHashSet es) == length es

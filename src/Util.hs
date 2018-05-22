@@ -21,7 +21,6 @@ import qualified Data.HashSet as HashSet
 import Data.List.NonEmpty(NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe
-import Data.Semigroup
 import Data.Set(Set)
 import qualified Data.Set as Set
 import Data.String
@@ -234,28 +233,6 @@ fixPoint f a
   | otherwise = fixPoint f a'
   where
     a' = f a
-
-saturate
-  :: (Eq a, Hashable a)
-  => (a -> HashSet a)
-  -> HashSet a
-  -> HashSet a
-saturate f = fixPoint $ \s -> HashSet.unions $ s : map f (HashSet.toList s)
-
-saturateMap
-  :: (Eq a, Eq b, Hashable a, Semigroup b, Foldable f)
-  => (b -> f a)
-  -> HashMap a b
-  -> HashMap a b
-saturateMap f = fixPoint $ \m -> unions
-  $ m
-  : [ HashMap.singleton a b'
-    | b <- HashMap.elems m
-    , a <- toList $ f b
-    , Just b' <- [HashMap.lookup a m]
-    ]
-  where
-    unions = foldl' (HashMap.unionWith (<>)) mempty
 
 filterMSet
   :: (Applicative f, Eq a, Hashable a)

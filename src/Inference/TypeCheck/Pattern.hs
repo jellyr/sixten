@@ -5,7 +5,6 @@ import Control.Applicative
 import Control.Monad.Except
 import Control.Monad.ST
 import Data.Bifunctor
-import Data.Bitraversable
 import Data.HashSet(HashSet)
 import Data.Monoid
 import Data.STRef

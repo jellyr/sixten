@@ -49,7 +49,7 @@ elabUnsolvedConstraint mkConstraint typ = case typ of
           -- TODO universalise types
           <> [(pure v, varType v) | v <- toList locals, isConstraintVar v]
     matchingInstances <- withVars (HashMap.keys uniVarMap) $ forM candidates $ \(inst, instType) -> tryMaybe $ do
-      f <- subtype instType uniType
+      f <- untouchable $ subtype instType uniType
       f inst
     case catMaybes matchingInstances of
       [] -> do
@@ -220,7 +220,7 @@ mkConstraintVar = exists mempty Constraint
 
 mergeConstraintVars
   :: HashSet MetaVar
-  -> Infer ()
+  -> Infer (HashSet MetaVar) -- ^ The metavars that are still unsolved
 mergeConstraintVars = undefined
   -- void . foldlM go mempty
   -- where

@@ -1,15 +1,14 @@
-{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, OverloadedStrings, TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving, MultiParamTypeClasses, OverloadedStrings, TypeSynonymInstances #-}
 module Inference.Monad where
 
+import Control.Monad.Except
 import Control.Monad.Reader
-import Data.Bifunctor
-import Data.Bitraversable
 import Data.Foldable
-import Data.Monoid
 
 import qualified Builtin.Names as Builtin
 import Inference.MetaVar
 import MonadContext
+import MonadFresh
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
@@ -37,32 +36,35 @@ shouldInst _ _ = True
 data InferEnv = InferEnv
   { localVariables :: Tsil FreeV
   , inferLevel :: !Level
+  , inferTouchables :: !(MetaVar -> Bool)
   }
 
-type Infer = ReaderT InferEnv VIX
+newtype Infer a = InferMonad (ReaderT InferEnv VIX a)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadFix, MonadError Error, MonadFresh, MonadVIX)
 
 runInfer :: Infer a -> VIX a
-runInfer i = runReaderT i InferEnv
+runInfer (InferMonad i) = runReaderT i InferEnv
   { localVariables = mempty
   , inferLevel = 1
+  , inferTouchables = const True
   }
 
 instance MonadContext FreeV Infer where
-  localVars = asks localVariables
+  localVars = InferMonad $ asks localVariables
 
-  withVar v m = do
+  withVar v (InferMonad m) = do
     locals <- localVars
     when (v `elem` toList locals) $ internalError "Duplicate var in context"
 
-    local
+    InferMonad $ local
       (\env -> env { localVariables = localVariables env `Tsil.Snoc` v })
       m
 
 level :: Infer Level
-level = asks inferLevel
+level = InferMonad $ asks inferLevel
 
 enterLevel :: Infer a -> Infer a
-enterLevel = local $ \e -> e { inferLevel = inferLevel e + 1 }
+enterLevel (InferMonad m) = InferMonad $ local (\e -> e { inferLevel = inferLevel e + 1 }) m
 
 exists
   :: NameHint
@@ -70,7 +72,7 @@ exists
   -> Abstract.Expr MetaVar FreeV
   -> Infer AbstractM
 exists hint d typ = do
-  locals <- asks $ toVector . localVariables
+  locals <- toVector <$> localVars
   let tele = varTelescope locals
       abstr = teleAbstraction locals
       typ' = Abstract.pis tele $ abstract abstr typ
@@ -91,3 +93,11 @@ existsVar
 existsVar _ Constraint typ = return $ Builtin.UnsolvedConstraint typ
 existsVar h Implicit typ = exists h Implicit typ
 existsVar h Explicit typ = exists h Explicit typ
+
+getTouchable :: Infer (MetaVar -> Bool)
+getTouchable = InferMonad $ asks inferTouchables
+
+untouchable :: Infer a -> Infer a
+untouchable (InferMonad i) = do
+  v <- fresh
+  InferMonad $ local (\s -> s { inferTouchables = \m -> inferTouchables s m && metaId m > v }) i

@@ -7,8 +7,6 @@ import Control.Monad.State
 import Data.Bitraversable
 import Data.Function
 import Data.Hashable
-import qualified Data.HashMap.Lazy as HashMap
-import qualified Data.HashSet as HashSet
 import Data.Monoid
 import Data.STRef
 import Data.String

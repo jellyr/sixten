@@ -1,7 +1,6 @@
 module Inference.TypeCheck.Data where
 
 import Control.Monad.Except
-import Data.Bifunctor
 import Data.Foldable as Foldable
 
 import {-# SOURCE #-} Inference.TypeCheck.Expr

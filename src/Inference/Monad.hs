@@ -85,15 +85,6 @@ existsType
   -> Infer AbstractM
 existsType n = exists n Explicit Builtin.Type
 
-existsVar
-  :: NameHint
-  -> Plicitness
-  -> AbstractM
-  -> Infer AbstractM
-existsVar _ Constraint typ = return $ Builtin.UnsolvedConstraint typ
-existsVar h Implicit typ = exists h Implicit typ
-existsVar h Explicit typ = exists h Explicit typ
-
 getTouchable :: Infer (MetaVar -> Bool)
 getTouchable = InferMonad $ asks inferTouchables
 

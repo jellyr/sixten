@@ -111,7 +111,7 @@ generaliseMetas metas = do
     instTyp' <- flip bindMetas instTyp $ \m' es -> return $ case HashMap.lookup m' sub of
       Nothing -> Abstract.Meta m' es
       Just v -> pure v
-    let localDeps = toHashSet instTyp' `HashSet.intersection` instVs
+    let localDeps = toHashSet instTyp' `HashSet.intersection` toHashSet instVs
     unless (HashSet.null localDeps) $ error "generaliseMetas local deps" -- TODO error message
     v <- freeVar (metaHint m) (metaPlicitness m) instTyp'
     modify $ HashMap.insert m v
@@ -119,17 +119,6 @@ generaliseMetas metas = do
   where
     acyclic (AcyclicSCC a) = a
     acyclic (CyclicSCC _) = error "generaliseMetas"
-
-    instantiatedMetaType
-      :: MetaVar
-      -> Infer (HashSet FreeV, AbstractM)
-    instantiatedMetaType m = go mempty (metaArity m) (vacuous $ metaType m)
-      where
-        go vs 0 t = return (vs, t)
-        go vs n (Abstract.Pi h a t s) = do
-          v <- freeVar h a t
-          go (HashSet.insert v vs) (n - 1) (instantiate1 (pure v) s)
-        go _ _ _ = internalError "instantiatedMetaType"
 
 generaliseDefs
   :: GeneraliseDefsMode

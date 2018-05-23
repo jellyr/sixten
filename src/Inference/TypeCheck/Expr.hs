@@ -74,7 +74,7 @@ instantiateForalls'
   -> Infer (Rhotype, AbstractM -> Infer AbstractM)
 instantiateForalls' (Abstract.Pi h p t s) instUntil
   | shouldInst p instUntil = do
-    v <- existsVar h p t
+    v <- exists h p t
     let typ = Util.instantiate1 v s
     (result, f) <- instantiateForalls typ instUntil
     return (result, \x -> f $ betaApp x p v)
@@ -212,7 +212,7 @@ tcRho expr expected expectedAppResult = case expr of
   Concrete.Wildcard -> do
     t <- existsType mempty
     f <- instExpected expected t
-    x <- existsVar mempty Explicit t
+    x <- exists mempty Explicit t
     f x
   Concrete.SourceLoc loc e -> located loc $ tcRho e expected expectedAppResult
 

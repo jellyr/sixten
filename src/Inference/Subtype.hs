@@ -106,7 +106,7 @@ subtypeRho' (Pi h1 p1 argType1 retScope1) (Pi h2 p2 argType2 retScope2) _
       $ \x -> fmap (Lam h p2 argType2)
       $ abstract1 v2 <$> f2 (App x p1 v1)
 subtypeRho' (Pi h p t s) typ2 instUntil | shouldInst p instUntil = do
-  v <- existsVar h p t
+  v <- exists h p t
   f <- subtypeRho (Util.instantiate1 v s) typ2 instUntil
   return $ \x -> f $ App x p v
 subtypeRho' typ1 typ2 _ = do

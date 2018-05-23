@@ -4,6 +4,7 @@ module Inference.Normalise where
 import Control.Monad.Except
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Vector as Vector
+import Data.Void
 
 import qualified Builtin.Names as Builtin
 import Inference.MetaVar
@@ -27,7 +28,7 @@ whnf
   -> m AbstractM
 whnf = whnf' WhnfArgs
   { expandTypeReps = False
-  , handleUnsolvedConstraint = const $ return Nothing
+  , handleMetaVar = const $ return Nothing
   }
 
 whnfExpandingTypeReps
@@ -36,14 +37,14 @@ whnfExpandingTypeReps
   -> m AbstractM
 whnfExpandingTypeReps = whnf' WhnfArgs
   { expandTypeReps = True
-  , handleUnsolvedConstraint = const $ return Nothing
+  , handleMetaVar = const $ return Nothing
   }
 
 data WhnfArgs m = WhnfArgs
   { expandTypeReps :: !Bool
     -- ^ Should types be reduced to type representations (i.e. forget what the
     -- type is and only remember its representation)?
-  , handleUnsolvedConstraint :: !(AbstractM -> m (Maybe AbstractM))
+  , handleMetaVar :: !(MetaVar -> m (Maybe (Expr MetaVar Void)))
     -- ^ Allows whnf to try to solve an unsolved class constraint when they're
     -- encountered.
   }
@@ -79,11 +80,6 @@ whnf' args expr = indentLog $ do
           Builtin.SubInt x y -> binOp Nothing (Just 0) (-) Builtin.SubInt (whnf' args) x y
           Builtin.AddInt x y -> binOp (Just 0) (Just 0) (+) Builtin.AddInt (whnf' args) x y
           Builtin.MaxInt x y -> binOp (Just 0) (Just 0) max Builtin.MaxInt (whnf' args) x y
-          expr'@(Builtin.UnsolvedConstraint typ) -> do
-            msolution <- handleUnsolvedConstraint args typ
-            case msolution of
-              Nothing -> return expr'
-              Just sol -> whnf' args sol
           expr' -> return expr'
 
 whnfInner
@@ -93,7 +89,11 @@ whnfInner
   -> m AbstractM
 whnfInner args expr = case expr of
   Var _ -> return expr
-  Meta m es -> traverseMetaSolution (whnf' args) m es
+  Meta m es -> do
+    sol <- handleMetaVar args m
+    case sol of
+      Nothing -> return expr
+      Just e -> whnf' args $ apps (vacuous e) es
   Global g -> do
     (d, _) <- definition g
     case d of

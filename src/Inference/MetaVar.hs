@@ -142,6 +142,18 @@ logMeta v s e = whenVerbose v $ do
 
 type FreeBindVar meta = FreeVar Plicitness (Expr meta)
 
+instantiatedMetaType
+  :: (MonadError Error m, MonadFresh m)
+  => MetaVar
+  -> m (Vector FreeV, Expr MetaVar (FreeBindVar MetaVar))
+instantiatedMetaType m = go mempty (metaArity m) (vacuous $ metaType m)
+  where
+    go vs 0 t = return (toVector $ reverse vs, t)
+    go vs n (Pi h a t s) = do
+      v <- freeVar h a t
+      go (v:vs) (n - 1) (instantiate1 (pure v) s)
+    go _ _ _ = internalError "instantiatedMetaType"
+
 -- TODO move?
 bindDefMetas
   :: (MonadFresh m, MonadContext (FreeBindVar meta') m)

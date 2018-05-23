@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, StandaloneDeriving #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
 module TypedFreeVar where
 
 import Bound

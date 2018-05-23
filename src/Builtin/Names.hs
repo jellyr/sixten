@@ -13,11 +13,6 @@ import Util
 pattern BuiltinModuleName :: ModuleName
 pattern BuiltinModuleName <- ((==) "Sixten.Builtin" -> True) where BuiltinModuleName = "Sixten.Builtin"
 
-pattern UnsolvedConstraintName :: QName
-pattern UnsolvedConstraintName <- ((==) "Sixten.Builtin.UnsolvedConstraint" -> True) where UnsolvedConstraintName = "Sixten.Builtin.UnsolvedConstraint"
-pattern UnsolvedConstraint :: Expr m v -> Expr m v
-pattern UnsolvedConstraint typ = App (Global UnsolvedConstraintName) Explicit typ
-
 pattern StaticErrorName :: QName
 pattern StaticErrorName <- ((==) "Sixten.Builtin.StaticError" -> True) where StaticErrorName = "Sixten.Builtin.StaticError"
 

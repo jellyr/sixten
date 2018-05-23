@@ -137,7 +137,7 @@ tcPat' p pat vs expected = case pat of
     pats' <- Vector.fromList <$> exactlyEqualisePats (Vector.toList argPlics) (Vector.toList pats)
 
     paramVars <- forTeleWithPrefixM paramsTele $ \h p' s paramVars ->
-      existsVar h p' $ instantiateTele id paramVars s
+      exists h p' $ instantiateTele id paramVars s
 
     let argTele = instantiatePrefix paramVars tele
 

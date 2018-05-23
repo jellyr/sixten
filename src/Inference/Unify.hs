@@ -160,10 +160,11 @@ unify' cxt touchable type1 type2
         Left l -> do
           t' <- normalise =<< prune (toHashSet vs) t
           occurs cxt l m t'
-          let tele = varTelescope vs
-              abstr = teleAbstraction vs
-              lamt = lams tele $ abstract abstr t'
+          let lamt = lams (varTelescope vs) $ abstract (teleAbstraction vs) t'
           lamtType <- typeOf lamt
+          logShow 30 "vs" vs
+          logMeta 30 ("solving 1 " <> show (metaId m)) t'
+          logMeta 30 ("solving 2 " <> show (metaId m)) lamt
           lamt' <- traverse (error "Unify TODO error message") lamt
           recurse cxt (vacuous $ metaType m) lamtType
           logMeta 30 ("solving " <> show (metaId m)) lamt

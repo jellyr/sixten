@@ -31,7 +31,7 @@ checkConstrDef (ConstrDef c typ) = do
     go :: AbstractM -> Infer ([AbstractM], AbstractM)
     -- TODO: Check for escaping type variables?
     go (Abstract.Pi h p t s) = do
-      v <- freeVar h p t
+      v <- forall h p t
       (sizes, ret) <- go $ instantiate1 (pure v) s
       return (t : sizes, ret)
     go ret = return ([], ret)
@@ -47,7 +47,7 @@ checkDataType name (DataDef cs) typ = do
 
   vs <- forTeleWithPrefixM (Abstract.telescope typ') $ \h p s vs -> do
     let is = instantiateTele pure vs s
-    freeVar h p is
+    forall h p is
 
   let constrRetType = Abstract.apps (pure name) $ (\v -> (varData v, pure v)) <$> vs
       abstr = teleAbstraction vs

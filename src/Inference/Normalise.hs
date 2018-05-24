@@ -182,7 +182,7 @@ normalise expr = do
     normaliseTelescope tele scope = do
       vs <- forTeleWithPrefixM tele $ \h p s vs -> do
         t' <- normalise $ instantiateTele pure vs s
-        freeVar h p t'
+        forall h p t'
 
       let abstr = teleAbstraction vs
       e' <- withVars vs $ normalise $ instantiateTele pure vs scope
@@ -193,7 +193,7 @@ normalise expr = do
       return (Telescope tele', scope')
     normaliseScope h p c t s = do
       t' <- normalise t
-      x <- freeVar h p t'
+      x <- forall h p t'
       ns <- withVar x $ normalise $ Util.instantiate1 (pure x) s
       return $ c t' $ abstract1 x ns
 

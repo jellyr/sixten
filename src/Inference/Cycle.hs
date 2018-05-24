@@ -128,7 +128,7 @@ peelLets = fmap fold . mapM go
       case e' of
         Let ds scope -> do
           vs <- forMLet ds $ \h _ t ->
-            freeVar h Explicit t
+            forall h Explicit t
           let inst = instantiateLet pure vs
           es <- forMLet ds $ \_ s _ ->
             return $ inst s

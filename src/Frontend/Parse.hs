@@ -263,7 +263,7 @@ atomicPattern :: Parser (Pat PreName Type PreName)
 atomicPattern = locatedPat
   $ symbol "(" *>% pattern <*% symbol ")"
   <|> (\v -> VarPat (fromPreName v) v) <$> qname
-  <|> WildcardPat <$ wildcard
+  <|> wildcardPat <$ wildcard
   <|> literalPat
   <?> "atomic pattern"
 
@@ -371,7 +371,7 @@ exprWithoutWhere
   <|> plicitPi Implicit <$ symbol "@" <*>% atomicExpr <*% symbol "->" <*>% exprWithoutWhere
   <?> "expression"
   where
-    plicitPi p argType retType = Pi p (AnnoPat WildcardPat argType) retType
+    plicitPi p argType retType = Pi p (AnnoPat wildcardPat argType) retType
 
     arr
       = flip (plicitPi Explicit) <$% symbol "->" <*>% exprWithoutWhere
@@ -457,7 +457,7 @@ dataDef = TopLevelDataDefinition <$ reserved "type" <*>% name <*> manyTypedBindi
       <*% symbol ":" <*>% expr
     constrDefs cs t = [ConstrDef c t | c <- cs]
     adtConDef = ConstrDef <$> constructor <*> (adtConType <$> manySI atomicExpr)
-    adtConType es = Unscoped.pis ((\e -> (Explicit, AnnoPat WildcardPat e)) <$> es) Wildcard
+    adtConType es = Unscoped.pis ((\e -> (Explicit, AnnoPat wildcardPat e)) <$> es) Wildcard
 
 classDef :: Parser TopLevelDefinition
 classDef = TopLevelClassDefinition <$ reserved "class" <*>% name <*> manyTypedBindings

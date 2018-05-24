@@ -72,7 +72,7 @@ existsAtLevel
 existsAtLevel hint p typ a l = do
   i <- fresh
   ref <- liftST $ newSTRef $ Left l
-  logVerbose 20 $ "exists: " <> fromString (show i)
+  logVerbose 20 $ "exists: " <> shower i
   return $ MetaVar i typ a hint p ref
 
 solution
@@ -143,20 +143,20 @@ logMeta v s e = whenVerbose v $ do
 type FreeBindVar meta = FreeVar Plicitness (Expr meta)
 
 instantiatedMetaType
-  :: (MonadError Error m, MonadFresh m)
+  :: (MonadError Error m, MonadFresh m, MonadVIX m, MonadIO m)
   => MetaVar
   -> m (Vector FreeV, Expr MetaVar (FreeBindVar MetaVar))
 instantiatedMetaType m = go mempty (metaArity m) (vacuous $ metaType m)
   where
     go vs 0 t = return (toVector $ reverse vs, t)
     go vs n (Pi h a t s) = do
-      v <- freeVar h a t
+      v <- forall h a t
       go (v:vs) (n - 1) (instantiate1 (pure v) s)
     go _ _ _ = internalError "instantiatedMetaType"
 
 -- TODO move?
 bindDefMetas
-  :: (MonadFresh m, MonadContext (FreeBindVar meta') m)
+  :: (MonadFresh m, MonadContext (FreeBindVar meta') m, MonadVIX m, MonadIO m)
   => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta')) -> m (Expr meta' (FreeBindVar meta')))
   -> Definition (Expr meta) (FreeBindVar meta')
   -> m (Definition (Expr meta') (FreeBindVar meta'))
@@ -165,7 +165,7 @@ bindDefMetas f def = case def of
   DataDefinition d t -> uncurry DataDefinition <$> bindDataDefMetas f d t
 
 bindDefMetas'
-  :: (MonadFresh m, MonadContext (FreeBindVar meta') m)
+  :: (MonadFresh m, MonadContext (FreeBindVar meta') m, MonadVIX m, MonadIO m)
   => (meta -> Vector (Plicitness, Expr meta' (FreeBindVar meta')) -> m (Expr meta' (FreeBindVar meta')))
   -> Definition (Expr meta) (FreeBindVar meta')
   -> m (Definition (Expr meta') (FreeBindVar meta'))
@@ -174,7 +174,7 @@ bindDefMetas' f = bindDefMetas $ \m es -> do
   f m es'
 
 bindDataDefMetas
-  :: (MonadFresh m, MonadContext (FreeBindVar meta') m)
+  :: (MonadFresh m, MonadContext (FreeBindVar meta') m, MonadVIX m, MonadIO m)
   => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta')) -> m (Expr meta' (FreeBindVar meta')))
   -> DataDef (Expr meta) (FreeBindVar meta')
   -> Expr meta (FreeBindVar meta')
@@ -184,7 +184,7 @@ bindDataDefMetas f (DataDef cs) typ = do
     let t = instantiateTele pure vs s
     -- TODO inefficient: make special-case forTeleWithPrefix + withVars
     t' <- withVars vs $ bindMetas f t
-    freeVar h p t'
+    forall h p t'
 
   withVars vs $ do
 
@@ -199,7 +199,7 @@ bindDataDefMetas f (DataDef cs) typ = do
     return (DataDef cs', typ')
 
 bindMetas
-  :: (MonadFresh m, MonadContext (FreeBindVar meta') m)
+  :: (MonadFresh m, MonadContext (FreeBindVar meta') m, MonadVIX m, MonadIO m)
   => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta')) -> m (Expr meta' (FreeBindVar meta')))
   -> Expr meta (FreeBindVar meta')
   -> m (Expr meta' (FreeBindVar meta'))
@@ -211,23 +211,23 @@ bindMetas f expr = case expr of
   Lit l -> return $ Lit l
   Pi h p t s -> do
     t' <- bindMetas f t
-    v <- freeVar h p t'
+    v <- forall h p t'
     let e = instantiate1 (pure v) s
     e' <- bindMetas f e
     let s' = abstract1 v e'
     return $ Pi h p t' s'
   Lam h p t s -> do
     t' <- bindMetas f t
-    v <- freeVar h p t'
+    v <- forall h p t'
     let e = instantiate1 (pure v) s
     e' <- bindMetas f e
     let s' = abstract1 v e'
-    return $ Pi h p t' s'
+    return $ Lam h p t' s'
   App e1 p e2 -> App <$> bindMetas f e1 <*> pure p <*> bindMetas f e2
   Let ds scope -> do
     vs <- forMLet ds $ \h _ t -> do
       t' <- bindMetas f t
-      freeVar h Explicit t'
+      forall h Explicit t'
     let abstr = letAbstraction vs
     withVars vs $ do
       ds' <- iforMLet ds $ \i h s _ -> do
@@ -244,7 +244,7 @@ bindMetas f expr = case expr of
   ExternCode e t -> ExternCode <$> mapM (bindMetas f) e <*> bindMetas f t
 
 bindMetas'
-  :: (MonadFresh m, MonadContext (FreeBindVar meta') m)
+  :: (MonadFresh m, MonadContext (FreeBindVar meta') m, MonadVIX m, MonadIO m)
   => (meta -> Vector (Plicitness, Expr meta' (FreeBindVar meta')) -> m (Expr meta' (FreeBindVar meta')))
   -> Expr meta (FreeBindVar meta')
   -> m (Expr meta' (FreeBindVar meta'))
@@ -253,7 +253,7 @@ bindMetas' f = bindMetas $ \m es -> do
   f m es'
 
 bindBranchMetas
-  :: (MonadFresh m, MonadContext (FreeBindVar meta') m)
+  :: (MonadFresh m, MonadContext (FreeBindVar meta') m, MonadVIX m, MonadIO m)
   => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta')) -> m (Expr meta' (FreeBindVar meta')))
   -> Branches Plicitness (Expr meta) (FreeBindVar meta')
   -> m (Branches Plicitness (Expr meta') (FreeBindVar meta'))
@@ -264,7 +264,7 @@ bindBranchMetas f brs = case brs of
         let t = instantiateTele pure vs s
         -- TODO inefficient: make special-case forTeleWithPrefix + withVars
         t' <- withVars vs $ bindMetas f t
-        freeVar h p t'
+        forall h p t'
 
       let abstr = teleAbstraction vs
           expr = instantiateTele pure vs scope

@@ -132,7 +132,7 @@ tcRho expr expected expectedAppResult = case expr of
           h = Concrete.patternHint pat
       body' <- enterLevel $ checkPoly body Builtin.Type
       f <- instExpected expected Builtin.Type
-      x <- freeVar h p patType
+      x <- forall h p patType
       body'' <- withVar x $ matchSingle (pure x) pat' body' Builtin.Type
       f $ Abstract.Pi h p patType $ abstract1 x body''
   Concrete.Lam p pat bodyScope -> do
@@ -143,7 +143,7 @@ tcRho expr expected expectedAppResult = case expr of
         withVars vs $ do
           let body = instantiatePattern pure vs bodyScope
           (body', bodyType) <- enterLevel $ inferRho body (InstUntil Explicit) Nothing
-          argVar <- freeVar h p argType
+          argVar <- forall h p argType
           body'' <- withVar argVar $ matchSingle (pure argVar) pat' body' bodyType
           let bodyScope' = abstract1 argVar body''
               bodyTypeScope = abstract1 argVar bodyType
@@ -157,7 +157,7 @@ tcRho expr expected expectedAppResult = case expr of
           let body = instantiatePattern pure vs bodyScope
               bodyType = Util.instantiate1 patExpr bodyTypeScope
           body' <- enterLevel $ checkPoly body bodyType
-          argVar <- freeVar h' p argType
+          argVar <- forall h' p argType
           body'' <- withVar argVar $ matchSingle (pure argVar) pat' body' bodyType
           fResult $ Abstract.Lam h' p argType $ abstract1 argVar body''
   Concrete.App fun p arg -> do
@@ -179,14 +179,14 @@ tcRho expr expected expectedAppResult = case expr of
     let names = (\(_, n, _, _) -> n) <$> ds
     evars <- forM names $ \name -> do
       typ <- existsType name
-      freeVar name Explicit typ
+      forall name Explicit typ
     let instantiatedDs
           = (\(loc, _, def, mtyp) ->
               ( loc
               , Concrete.TopLevelPatDefinition $ Concrete.instantiateLetClause pure evars <$> def
               , instantiateLet pure evars <$> mtyp
               )) <$> ds
-    ds' <- checkRecursiveDefs False (Vector.zip evars instantiatedDs)
+    ds' <- withVars evars $ checkRecursiveDefs False (Vector.zip evars instantiatedDs)
     let evars' = (\(v, _, _) -> v) <$> ds'
         eabstr = letAbstraction evars'
     let ds'' = LetRec
@@ -197,8 +197,8 @@ tcRho expr expected expectedAppResult = case expr of
       vars <- iforMLet ds'' $ \i h s t -> do
         let (_, Definition a _ _, _) = ds' Vector.! i
         case a of
-          Abstract -> freeVar h Explicit t
-          Concrete -> freeVar h Explicit t
+          Abstract -> forall h Explicit t
+          Concrete -> forall h Explicit t
             -- Meta.let_ h Explicit (inst s) t -- TODO
       let abstr = letAbstraction vars
       body <- withVars vars $ tcRho (instantiateLet pure vars scope) expected expectedAppResult
@@ -228,17 +228,17 @@ tcBranches expr pbrs expected expectedAppResult = do
   inferredPats <- forM pbrs $ \(pat, brScope) -> do
     (pat', _, vs) <- checkPat Explicit (void pat) mempty exprType
     let br = instantiatePattern pure vs brScope
-    return (pat', br)
+    return (pat', br, vs)
 
   (inferredBranches, resType) <- case expected of
     Check resType -> do
-      brs <- forM inferredPats $ \(pat, br) -> do
+      brs <- forM inferredPats $ \(pat, br, vs) -> withVars vs $ do
         br' <- checkRho br resType
         return (pat, br')
       return (brs, resType)
     Infer _ instUntil -> do
       resType <- existsType mempty
-      brs <- forM inferredPats $ \(pat, br) -> do
+      brs <- forM inferredPats $ \(pat, br, vs) -> withVars vs $ do
         (br', brType) <- inferRho br instUntil expectedAppResult
         unify mempty brType resType
         return (pat, br')

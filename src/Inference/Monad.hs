@@ -69,7 +69,7 @@ enterLevel (InferMonad m) = InferMonad $ local (\e -> e { inferLevel = inferLeve
 exists
   :: NameHint
   -> Plicitness
-  -> Abstract.Expr MetaVar FreeV
+  -> AbstractM
   -> Infer AbstractM
 exists hint d typ = do
   locals <- toVector <$> localVars

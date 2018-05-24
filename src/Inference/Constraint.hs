@@ -86,7 +86,7 @@ elabDef (DataDefinition (DataDef constrs) rep) typ = do
   let params = telescope typ'
   vs <- forTeleWithPrefixM params $ \h p s vs -> do
     let t = instantiateTele pure vs s
-    freeVar h p t
+    forall h p t
 
   let abstr = teleAbstraction vs
   constrs' <- withVars vs $ forM constrs $ \constr -> forM constr $ \s -> do

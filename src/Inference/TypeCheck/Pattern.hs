@@ -104,17 +104,8 @@ tcPat' p pat vs expected = case pat of
         liftST $ writeSTRef ref expectedType
         return expectedType
       CheckPat expectedType -> return expectedType
-    v <- freeVar h p expectedType
+    v <- forall h p expectedType
     return (Abstract.VarPat h v, pure v, vs <> pure v)
-  Concrete.WildcardPat -> do
-    expectedType <- case expected of
-      InferPat ref -> do
-        expectedType <- existsType mempty
-        liftST $ writeSTRef ref expectedType
-        return expectedType
-      CheckPat expectedType -> return expectedType
-    v <- freeVar mempty p expectedType
-    return (Abstract.VarPat mempty v, pure v, vs)
   Concrete.LitPat lit -> do
     (pat', expr) <- instPatExpected
       expected
@@ -184,7 +175,7 @@ viewPat
   -> (AbstractM -> Infer AbstractM) -- ^ expectedType -> patType
   -> Infer (Abstract.Pat AbstractM FreeV, AbstractM) -- ^ (expectedType, :: expectedType)
 viewPat expectedType pat patExpr f = do
-  x <- freeVar mempty Explicit expectedType
+  x <- forall mempty Explicit expectedType
   fx <- f $ pure x
   if fx == pure x then
     return (pat, patExpr)
@@ -210,10 +201,10 @@ patToTerm pat = case pat of
 -- "Equalisation" -- making the patterns match a list of parameter plicitnesses
 -- by adding implicits
 exactlyEqualisePats
-  :: (Pretty v, Pretty c)
+  :: Pretty c
   => [Plicitness]
-  -> [(Plicitness, Concrete.Pat c e v)]
-  -> Infer [(Plicitness, Concrete.Pat c e v)]
+  -> [(Plicitness, Concrete.Pat c e ())]
+  -> Infer [(Plicitness, Concrete.Pat c e ())]
 exactlyEqualisePats [] [] = return []
 exactlyEqualisePats [] ((p, pat):_)
   = throwLocated
@@ -229,9 +220,9 @@ exactlyEqualisePats (Implicit:ps) ((Implicit, pat):pats)
 exactlyEqualisePats (Explicit:ps) ((Explicit, pat):pats)
   = (:) (Explicit, pat) <$> exactlyEqualisePats ps pats
 exactlyEqualisePats (Constraint:ps) pats
-  = (:) (Constraint, Concrete.WildcardPat) <$> exactlyEqualisePats ps pats
+  = (:) (Constraint, Concrete.wildcardPat) <$> exactlyEqualisePats ps pats
 exactlyEqualisePats (Implicit:ps) pats
-  = (:) (Implicit, Concrete.WildcardPat) <$> exactlyEqualisePats ps pats
+  = (:) (Implicit, Concrete.wildcardPat) <$> exactlyEqualisePats ps pats
 exactlyEqualisePats (Explicit:_) ((Constraint, pat):_)
   = throwExpectedExplicit pat
 exactlyEqualisePats (Explicit:_) ((Implicit, pat):_)
@@ -245,10 +236,10 @@ exactlyEqualisePats (Explicit:_) []
     ]
 
 equalisePats
-  :: (Pretty v, Pretty c)
+  :: (Pretty c)
   => [Plicitness]
-  -> [(Plicitness, Concrete.Pat c e v)]
-  -> Infer [(Plicitness, Concrete.Pat c e v)]
+  -> [(Plicitness, Concrete.Pat c e ())]
+  -> Infer [(Plicitness, Concrete.Pat c e ())]
 equalisePats _ [] = return []
 equalisePats [] pats = return pats
 equalisePats (Constraint:ps) ((Constraint, pat):pats)
@@ -258,9 +249,9 @@ equalisePats (Implicit:ps) ((Implicit, pat):pats)
 equalisePats (Explicit:ps) ((Explicit, pat):pats)
   = (:) (Explicit, pat) <$> equalisePats ps pats
 equalisePats (Constraint:ps) pats
-  = (:) (Constraint, Concrete.WildcardPat) <$> equalisePats ps pats
+  = (:) (Constraint, Concrete.wildcardPat) <$> equalisePats ps pats
 equalisePats (Implicit:ps) pats
-  = (:) (Implicit, Concrete.WildcardPat) <$> equalisePats ps pats
+  = (:) (Implicit, Concrete.wildcardPat) <$> equalisePats ps pats
 equalisePats (Explicit:_) ((Implicit, pat):_)
   = throwExpectedExplicit pat
 equalisePats (Explicit:_) ((Constraint, pat):_)

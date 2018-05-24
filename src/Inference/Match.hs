@@ -57,7 +57,7 @@ matchSingle
   -> AbstractM
   -> Infer ExprF
 matchSingle expr pat innerExpr retType = do
-  failVar <- freeVar "fail" Explicit retType
+  failVar <- forall "fail" Explicit retType
   result <- withVar failVar $ match failVar retType [expr] [([pat], innerExpr)] innerExpr
   return $ substitute failVar (Builtin.Fail retType) result
 
@@ -67,7 +67,7 @@ matchCase
   -> AbstractM
   -> Infer ExprF
 matchCase expr pats retType = do
-  failVar <- freeVar "fail" Explicit retType
+  failVar <- forall "fail" Explicit retType
   result <- withVar failVar $ match failVar retType [expr] (first pure <$> pats) (pure failVar)
   return $ substitute failVar (Builtin.Fail retType) result
 
@@ -77,7 +77,7 @@ matchClauses
   -> AbstractM
   -> Infer ExprF
 matchClauses exprs pats retType = do
-  failVar <- freeVar "fail" Explicit retType
+  failVar <- forall "fail" Explicit retType
   result <- withVar failVar $ match failVar retType exprs pats (pure failVar)
   return $ substitute failVar (Builtin.Fail retType) result
 
@@ -169,7 +169,7 @@ conPatArgs c params = do
   let (tele, _) = pisView (ctype :: AbstractM)
       tele' = instantiatePrefix (snd <$> params) tele
   vs <- forTeleWithPrefixM tele' $ \h p s vs ->
-    freeVar h p $ instantiateTele pure vs s
+    forall h p $ instantiateTele pure vs s
   let ps = (\(p, v) -> (p, VarPat (varHint v) v, varType v))
         <$> Vector.zip (teleAnnotations tele') vs
   return (ps, vs)

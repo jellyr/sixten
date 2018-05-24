@@ -64,7 +64,7 @@ checkClauses clauses polyType = indentLog $ do
 
     piPlicitnesses' :: AbstractM -> Infer [Plicitness]
     piPlicitnesses' (Abstract.Pi h p t s) = do
-      v <- freeVar h p t
+      v <- forall h p t
       (:) p <$> piPlicitnesses (instantiate1 (pure v) s)
     piPlicitnesses' _ = return mempty
 
@@ -96,7 +96,7 @@ checkClausesRho clauses rhoType = do
     logMeta 20 "checkClausesRho clause body" body
 
   argVars <- forTeleWithPrefixM (addTeleNames argTele $ Concrete.patternHint <$> firstPats) $ \h p s argVars ->
-    freeVar h p $ instantiateTele pure argVars s
+    forall h p $ instantiateTele pure argVars s
 
   withVars argVars $ do
     let returnType = instantiateTele pure argVars returnTypeScope
@@ -167,7 +167,7 @@ equaliseClauses clauses
       :: [(Plicitness, Concrete.Pat c (Scope b expr v) ())]
       -> ([(Plicitness, Concrete.Pat c (Scope b expr v) ())], [Plicitness])
     addImplicit pats@((Implicit, _):_) = (pats, mempty)
-    addImplicit pats = ((Implicit, Concrete.WildcardPat) : pats, mempty)
+    addImplicit pats = ((Implicit, Concrete.wildcardPat) : pats, mempty)
 
     addExplicit pats@((Explicit, _):_) = (pats, mempty)
     addExplicit pats = ((Explicit, Concrete.VarPat mempty ()) : pats, pure Explicit)

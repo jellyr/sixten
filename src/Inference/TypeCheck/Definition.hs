@@ -29,6 +29,7 @@ import Inference.Monad
 import Inference.TypeCheck.Clause
 import Inference.TypeCheck.Data
 import Inference.Unify
+import MonadContext
 import Syntax
 import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
@@ -113,7 +114,7 @@ generaliseMetas metas = do
       Just v -> pure v
     let localDeps = toHashSet instTyp' `HashSet.intersection` toHashSet instVs
     unless (HashSet.null localDeps) $ error "generaliseMetas local deps" -- TODO error message
-    v <- freeVar (metaHint m) (metaPlicitness m) instTyp'
+    v <- forall (metaHint m) (metaPlicitness m) instTyp'
     modify $ HashMap.insert m v
     return ()
   where
@@ -141,6 +142,8 @@ generaliseDefs mode defs = indentLog $ do
   -- resolved (unresolved class instances are assumed to depend on all
   -- instances), so we can't be sure that we have a single cycle. Therefore we
   -- separately compute dependencies for each definition.
+  --
+  -- TODO: This needs to be done _after_ generalising, such that meta variable dependencies are not counted
   zonkedDefs <- forM defs $ \(v, def, typ) -> do
     def' <- zonkDef def
     typ' <- zonk typ
@@ -216,7 +219,7 @@ generaliseDefsInner mode defs = do
     return (v, d', t')
 
   newVars <- forM genDefs $ \(v, _, t) ->
-    freeVar (varHint v) (varData v) t
+    forall (varHint v) (varData v) t
 
   let lookupNewVar = hashedLookup $ Vector.zip vars newVars
       newVarSub v = fromMaybe v $ lookupNewVar v
@@ -371,7 +374,7 @@ checkTopLevelRecursiveDefs defs = do
     vars <- forM names $ \name -> do
       let hint = fromQName name
       typ <- existsType hint
-      freeVar hint Explicit typ
+      forall hint Explicit typ
 
     let nameIndex = hashedElemIndex names
         expose name = case nameIndex name of
@@ -383,7 +386,7 @@ checkTopLevelRecursiveDefs defs = do
     let exposedDefs = flip fmap defs $ \(_, loc, def, mtyp) ->
           (loc, gbound expose $ vacuous def, gbind expose . vacuous <$> mtyp)
 
-    checkRecursiveDefs True (Vector.zip vars exposedDefs)
+    withVars vars $ checkRecursiveDefs True (Vector.zip vars exposedDefs)
 
   let vars' = (\(v, _, _) -> v) <$> checkedDefs
 

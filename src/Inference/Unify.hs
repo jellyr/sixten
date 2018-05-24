@@ -152,7 +152,7 @@ unify' cxt touchable type1 type2
   where
     absCase h p t1 t2 s1 s2 = do
       unify cxt t1 t2
-      v <- freeVar h p t1
+      v <- forall h p t1
       withVar v $ unify cxt (instantiate1 (pure v) s1) (instantiate1 (pure v) s2)
     solveVar recurse m vs t = do
       sol <- solution m

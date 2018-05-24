@@ -41,7 +41,7 @@ skolemise'
   -> Infer a
 skolemise' (Pi h p t resScope) instUntil k
   | shouldInst p instUntil = do
-    v <- freeVar h p t
+    v <- forall h p t
     let resType = Util.instantiate1 (pure v) resScope
     withVar v $ skolemise resType instUntil $ \resType' f -> do
       let f' x = Lam h p t . abstract1 v <$> f x
@@ -69,7 +69,7 @@ subtype' (Pi h1 p1 argType1 retScope1) (Pi h2 p2 argType2 retScope2)
   | p1 == p2 = do
     let h = h1 <> h2
     f1 <- subtype argType2 argType1
-    v2 <- freeVar h p1 argType2
+    v2 <- forall h p1 argType2
     v1 <- f1 $ pure v2
     let retType1 = Util.instantiate1 v1 retScope1
         retType2 = Util.instantiate1 (pure v2) retScope2
@@ -97,7 +97,7 @@ subtypeRho' (Pi h1 p1 argType1 retScope1) (Pi h2 p2 argType2 retScope2) _
   | p1 == p2 = do
     let h = h1 <> h2
     f1 <- subtype argType2 argType1
-    v2 <- freeVar h p1 argType2
+    v2 <- forall h p1 argType2
     v1 <- f1 $ pure v2
     let retType1 = Util.instantiate1 v1 retScope1
         retType2 = Util.instantiate1 (pure v2) retScope2
@@ -139,7 +139,7 @@ funSubtypes startType plics = go plics startType mempty mempty mempty
       | otherwise = do
         let p = Vector.head ps
         (h, argType, resScope, f) <- funSubtype typ p
-        v <- freeVar mempty p argType
+        v <- forall mempty p argType
         withVar v $ go
           (Vector.tail ps)
           (Util.instantiate1 (pure v) resScope)

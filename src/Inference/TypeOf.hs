@@ -34,7 +34,7 @@ typeOf expr = case expr of
   Lit l -> return $ typeOfLiteral l
   Pi {} -> return Builtin.Type
   Lam h p t s -> do
-    x <- freeVar h p t
+    x <- forall h p t
     resType  <- withVar x $ typeOf $ instantiate1 (pure x) s
     let abstractedResType = abstract1 x resType
     return $ Pi h p t abstractedResType
@@ -45,7 +45,7 @@ typeOf expr = case expr of
       Pi _ p' _ resType | p == p' -> return $ instantiate1 e2 resType
       _ -> internalError $ "typeOf: expected" PP.<+> shower p PP.<+> "pi type" PP.<+> shower e1type'
   Let ds s -> do
-    xs <- forMLet ds $ \h _ t -> freeVar h Explicit t
+    xs <- forMLet ds $ \h _ t -> forall h Explicit t
     withVars xs $ typeOf $ instantiateLet pure xs s
   Case _ _ retType -> return retType
   ExternCode _ retType -> return retType

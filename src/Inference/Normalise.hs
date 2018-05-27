@@ -28,7 +28,11 @@ whnf
   -> m AbstractM
 whnf = whnf' WhnfArgs
   { expandTypeReps = False
-  , handleMetaVar = const $ return Nothing
+  , handleMetaVar = \m -> do
+    sol <- solution m
+    case sol of
+      Left _ -> return Nothing
+      Right e -> return $ Just e
   }
 
 whnfExpandingTypeReps
@@ -37,7 +41,11 @@ whnfExpandingTypeReps
   -> m AbstractM
 whnfExpandingTypeReps = whnf' WhnfArgs
   { expandTypeReps = True
-  , handleMetaVar = const $ return Nothing
+  , handleMetaVar = \m -> do
+    sol <- solution m
+    case sol of
+      Left _ -> return Nothing
+      Right e -> return $ Just e
   }
 
 data WhnfArgs m = WhnfArgs
@@ -45,7 +53,7 @@ data WhnfArgs m = WhnfArgs
     -- ^ Should types be reduced to type representations (i.e. forget what the
     -- type is and only remember its representation)?
   , handleMetaVar :: !(MetaVar -> m (Maybe (Expr MetaVar Void)))
-    -- ^ Allows whnf to try to solve an unsolved class constraint when they're
+    -- ^ Allows whnf to try to solve unsolved class constraints when they're
     -- encountered.
   }
 

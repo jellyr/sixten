@@ -399,10 +399,15 @@ checkTopLevelRecursiveDefs defs = do
       mf v = internalError $ "checkTopLevelRecursiveDefs" PP.<+> shower v PP.<+> shower l
 
   forM (Vector.zip names checkedDefs) $ \(name, (_, def, typ)) -> do
+    logDefMeta 20 ("checkTopLevelRecursiveDefs def " ++ show (pretty name)) def
+    logMeta 20 ("checkTopLevelRecursiveDefs typ " ++ show (pretty name)) typ
     let unexposedDef = def >>>= unexpose
         unexposedTyp = typ >>= unexpose
-    -- logMeta 20 ("checkTopLevelRecursiveDefs unexposedDef " ++ show (pretty name)) unexposedDef
+    logDefMeta 20 ("checkTopLevelRecursiveDefs unexposedDef " ++ show (pretty name)) unexposedDef
     logMeta 20 ("checkTopLevelRecursiveDefs unexposedTyp " ++ show (pretty name)) unexposedTyp
+    VIX.log "aaa"
     unexposedDef' <- bitraverseDefinition mf vf unexposedDef
+    VIX.log "aaa"
     unexposedTyp' <- bitraverse mf vf unexposedTyp
+    VIX.log "aaa"
     return (name, unexposedDef', unexposedTyp')

@@ -53,7 +53,7 @@ instance Hashable MetaVar where
 
 instance Show MetaVar where
   showsPrec d (MetaVar i t a h p _) = showParen (d > 10) $
-    showString "Meta" . showChar ' ' .
+    showString "MetaVar" . showChar ' ' .
     showsPrec 11 i . showChar ' ' .
     showsPrec 11 t . showChar ' ' .
     showsPrec 11 a . showChar ' ' .
@@ -129,6 +129,14 @@ prettyMeta e = do
   e' <- bitraverse (\m -> WithVar m <$> prettyMetaVar m) (pure . pretty) e
   return $ pretty e'
 
+prettyDefMeta
+  :: (Pretty v, MonadIO m)
+  => Definition (Expr MetaVar) v
+  -> m Doc
+prettyDefMeta e = do
+  e' <- bitraverseDefinition (\m -> WithVar m <$> prettyMetaVar m) (pure . pretty) e
+  return $ pretty e'
+
 logMeta
   :: (MonadIO m, Pretty v, MonadVIX m)
   => Int
@@ -138,6 +146,17 @@ logMeta
 logMeta v s e = whenVerbose v $ do
   i <- liftVIX $ gets vixIndent
   d <- prettyMeta e
+  VIX.log $ mconcat (replicate i "| ") <> "--" <> fromString s <> ": " <> showWide d
+
+logDefMeta
+  :: (MonadIO m, Pretty v, MonadVIX m)
+  => Int
+  -> String
+  -> Definition (Expr MetaVar) v
+  -> m ()
+logDefMeta v s e = whenVerbose v $ do
+  i <- liftVIX $ gets vixIndent
+  d <- prettyDefMeta e
   VIX.log $ mconcat (replicate i "| ") <> "--" <> fromString s <> ": " <> showWide d
 
 type FreeBindVar meta = FreeVar Plicitness (Expr meta)

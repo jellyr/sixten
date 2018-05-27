@@ -2,6 +2,7 @@
 module Inference.TypeOf where
 
 import Control.Monad.Except
+import Data.Monoid
 import qualified Data.Text.Prettyprint.Doc as PP
 import Data.Void
 
@@ -43,7 +44,8 @@ typeOf expr = case expr of
     e1type' <- whnf e1type
     case e1type' of
       Pi _ p' _ resType | p == p' -> return $ instantiate1 e2 resType
-      _ -> internalError $ "typeOf: expected" PP.<+> shower p PP.<+> "pi type" PP.<+> shower e1type'
+      _ -> internalError $ "typeOf: expected" PP.<+> shower p PP.<+> "pi type"
+        <> PP.line <> "actual type: " PP.<+> shower e1type'
   Let ds s -> do
     xs <- forMLet ds $ \h _ t -> forall h Explicit t
     withVars xs $ typeOf $ instantiateLet pure xs s

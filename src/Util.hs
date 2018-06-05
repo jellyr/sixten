@@ -234,6 +234,13 @@ fixPoint f a
   where
     a' = f a
 
+saturate
+  :: (Eq a, Hashable a)
+  => (a -> HashSet a)
+  -> HashSet a
+  -> HashSet a
+saturate f = fixPoint $ \s -> HashSet.unions $ s : map f (HashSet.toList s)
+
 filterMSet
   :: (Applicative f, Eq a, Hashable a)
   => (a -> f Bool)

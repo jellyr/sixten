@@ -96,31 +96,7 @@ data GeneraliseDefsMode
   | GeneraliseAll
   deriving (Eq, Show)
 
-generaliseMetas
-  :: HashSet MetaVar
-  -> Infer (HashMap MetaVar FreeV)
-generaliseMetas metas = do
-  instMetas <- forM (toList metas) $ \m -> do
-    (instVs, instTyp) <- instantiatedMetaType m
-    deps <- metaVars instTyp
-    return (m, (instVs, instTyp, deps))
-
-  let sortedMetas = acyclic <$> topoSortWith fst (thd3 . snd) instMetas
-
-  flip execStateT mempty $ forM_ sortedMetas $ \(m, (instVs, instTyp, _deps)) -> do
-    sub <- get
-    instTyp' <- flip bindMetas instTyp $ \m' es -> return $ case HashMap.lookup m' sub of
-      Nothing -> Abstract.Meta m' es
-      Just v -> pure v
-    let localDeps = toHashSet instTyp' `HashSet.intersection` toHashSet instVs
-    unless (HashSet.null localDeps) $ error "generaliseMetas local deps" -- TODO error message
-    v <- forall (metaHint m) (metaPlicitness m) instTyp'
-    modify $ HashMap.insert m v
-    return ()
-  where
-    acyclic (AcyclicSCC a) = a
-    acyclic (CyclicSCC _) = error "generaliseMetas"
-
+{-
 generaliseDefs
   :: GeneraliseDefsMode
   -> Vector
@@ -155,6 +131,180 @@ generaliseDefs mode defs = indentLog $ do
 
   return (Vector.concat $ fst <$> genDefs, appEndo $ mconcat $ Endo . snd <$> genDefs)
 
+  -- Plan: Collect all the metas
+  -- Make them into FVs
+  -- topoSort
+  -- Generalise and substitute
+-}
+
+generaliseDefs
+  :: GeneraliseDefsMode
+  -> Vector
+    ( FreeV
+    , Definition (Abstract.Expr MetaVar) FreeV
+    , AbstractM
+    )
+  -> Infer
+    ( Vector
+      ( FreeV
+      , Definition (Abstract.Expr MetaVar) FreeV
+      , AbstractM
+      )
+    , FreeV -> FreeV
+    )
+generaliseDefs mode defs = do
+  metas <- collectMetas mode defs
+  metas' <- mergeConstraintVars metas
+  varMap <- generaliseMetas metas'
+  defs' <- replaceMetas varMap defs
+  let defDeps = collectDefDeps (toHashSet $ HashMap.elems varMap) defs'
+  generaliseDefsInner defDeps
+
+collectMetas
+  :: GeneraliseDefsMode
+  -> Vector
+    ( FreeV
+    , Definition (Abstract.Expr MetaVar) FreeV
+    , AbstractM
+    )
+  -> Infer (HashSet MetaVar)
+collectMetas mode defs = do
+  outerLevel <- level
+
+  let isLocalConstraint m@MetaVar { metaPlicitness = Constraint } = isLocalMeta m
+      isLocalConstraint _ = return False
+
+      isLocalMeta m = either (>= outerLevel) (const False) <$> solution m
+
+  defVars <- case mode of
+    GeneraliseType -> return mempty
+    GeneraliseAll -> forM defs $ \(_, def, _) ->
+      filterMSet isLocalConstraint =<< definitionMetaVars def
+
+  typeVars <- forM defs $ \(_, _, typ) ->
+    filterMSet isLocalMeta =<< metaVars typ
+
+  return $ fold $ defVars <> typeVars
+
+generaliseMetas
+  :: HashSet MetaVar
+  -> Infer (HashMap MetaVar FreeV)
+generaliseMetas metas = do
+  instMetas <- forM (toList metas) $ \m -> do
+    (instVs, instTyp) <- instantiatedMetaType m
+    deps <- metaVars instTyp
+    return (m, (instVs, instTyp, deps))
+
+  let sortedMetas = acyclic <$> topoSortWith fst (thd3 . snd) instMetas
+
+  flip execStateT mempty $ forM_ sortedMetas $ \(m, (instVs, instTyp, _deps)) -> do
+    sub <- get
+    instTyp' <- flip bindMetas instTyp $ \m' es -> return $ case HashMap.lookup m' sub of
+      Nothing -> Abstract.Meta m' es
+      Just v -> pure v
+    let localDeps = toHashSet instTyp' `HashSet.intersection` toHashSet instVs
+    unless (HashSet.null localDeps) $ error "generaliseMetas local deps" -- TODO error message
+    v <- forall (metaHint m) (metaPlicitness m) instTyp'
+    modify $ HashMap.insert m v
+    return ()
+  where
+    acyclic (AcyclicSCC a) = a
+    acyclic (CyclicSCC _) = error "generaliseMetas"
+
+replaceMetas
+  :: HashMap MetaVar FreeV
+  -> Vector
+    ( FreeV
+    , Definition (Abstract.Expr MetaVar) FreeV
+    , AbstractM
+    )
+  -> Infer
+    ( Vector
+      ( FreeV
+      , Definition (Abstract.Expr MetaVar) FreeV
+      , AbstractM
+      )
+    )
+replaceMetas varMap defs = forM defs $ \(v, d, t) -> do
+  d' <- flip bindDefMetas' d $ \m es -> case HashMap.lookup m varMap of
+    Nothing -> return $ Abstract.Meta m es
+    Just e -> return $ pure e
+  t' <- flip bindMetas' t $ \m es -> case HashMap.lookup m varMap of
+    Nothing -> return $ Abstract.Meta m es
+    Just e -> return $ pure e
+  return (v, d', t')
+
+collectDefDeps
+  :: HashSet FreeV
+  -> Vector
+    ( FreeV
+    , Definition (Abstract.Expr MetaVar) FreeV
+    , AbstractM
+    )
+  -> Vector
+    ( FreeV
+    , ( Definition (Abstract.Expr MetaVar) FreeV
+      , AbstractM
+      , [FreeV]
+      )
+    )
+collectDefDeps vars defs = do
+  let allDeps = flip fmap defs $ \(v, def, typ) -> do
+        let d = toHashSet def
+            t = toHashSet typ
+        (v, (def, typ, d <> t))
+      sat
+        = fmap acyclic
+        . topoSortWith id (toHashSet . varType)
+        . HashSet.intersection vars
+        . saturate (fold . fmap thd3 . hashedLookup allDeps)
+  fmap ((\(def, typ, deps) -> (def, typ, sat deps))) <$> allDeps
+  where
+    acyclic (AcyclicSCC a) = a
+    acyclic (CyclicSCC _) = error "collectDefDeps"
+
+generaliseDefsInner
+  :: Vector
+    ( FreeV
+    , ( Definition (Abstract.Expr MetaVar) FreeV
+      , AbstractM
+      , [FreeV]
+      )
+    )
+  -> Infer
+    ( Vector
+      ( FreeV
+      , Definition (Abstract.Expr MetaVar) FreeV
+      , AbstractM
+      )
+    , FreeV -> FreeV
+    )
+generaliseDefsInner defs = do
+  let appSubMap
+        = toHashMap
+        $ (\(v, (_, _, vs)) -> (v, Abstract.apps (pure v) ((\v' -> (implicitise $ varData v', pure v')) <$> vs)))
+        <$> defs
+      appSub v = HashMap.lookupDefault (pure v) v appSubMap
+
+  subbedDefs <- forM defs $ \(oldVar, (def, typ, vs)) -> do
+    let subbedDef = def >>>= appSub
+        subbedType = typ >>= appSub
+        (def', typ') = abstractDef vs subbedDef subbedType
+    newVar <- freeVar (varHint oldVar) (varData oldVar) typ'
+    return (oldVar, newVar, def')
+
+  let renameMap
+        = toHashMap
+        $ (\(oldVar, newVar, _) -> (oldVar, newVar)) <$> subbedDefs
+      rename v = HashMap.lookupDefault v v renameMap
+
+      renamedDefs
+        = (\(_, newVar, def) -> (newVar, rename <$> def, rename <$> varType newVar))
+        <$> subbedDefs
+
+  return (renamedDefs, rename)
+
+{-
 generaliseDefsInner
   :: GeneraliseDefsMode
   -> Vector
@@ -231,6 +381,7 @@ generaliseDefsInner mode defs = do
   where
     acyclic (AcyclicSCC a) = a
     acyclic (CyclicSCC _) = error "generaliseDefsInner"
+    -}
 
 checkRecursiveDefs
   :: Bool

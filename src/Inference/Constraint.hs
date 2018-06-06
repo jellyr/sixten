@@ -113,8 +113,12 @@ mkConstraintVar = exists mempty Constraint
 mergeConstraintVars
   :: HashSet MetaVar
   -> Infer (HashSet MetaVar) -- ^ The metavars that are still unsolved
-mergeConstraintVars
-  = fmap (toHashSet . Map.elems) . foldlM go mempty
+mergeConstraintVars vars = do
+  logShow 35 "mergeConstraintVars" vars
+  _ <- foldlM go mempty vars
+  vars' <- filterMSet isUnsolved vars
+  logShow 35 "mergeConstraintVars result" vars'
+  return vars'
   where
     go varTypes m@MetaVar { metaPlicitness = Constraint } = do
       let arity = metaArity m

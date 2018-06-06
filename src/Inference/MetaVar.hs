@@ -5,6 +5,7 @@ import Control.Monad.Except
 import Control.Monad.ST
 import Control.Monad.State
 import Data.Bitraversable
+import Data.Either
 import Data.Function
 import Data.Hashable
 import Data.Monoid
@@ -87,6 +88,12 @@ solve
   -> Expr MetaVar Void
   -> m ()
 solve m x = liftST $ writeSTRef (metaRef m) $ Right x
+
+isSolved :: MonadIO m => MetaVar -> m Bool
+isSolved = fmap isRight . solution
+
+isUnsolved :: MonadIO m => MetaVar -> m Bool
+isUnsolved = fmap isLeft . solution
 
 traverseMetaSolution
   :: MonadIO m
@@ -178,16 +185,21 @@ bindDefMetas
   :: (MonadFresh m, MonadContext (FreeBindVar meta') m, MonadVIX m, MonadIO m)
   => (meta -> Vector (Plicitness, Expr meta (FreeBindVar meta')) -> m (Expr meta' (FreeBindVar meta')))
   -> Definition (Expr meta) (FreeBindVar meta')
-  -> m (Definition (Expr meta') (FreeBindVar meta'))
-bindDefMetas f def = case def of
-  Definition a i e -> Definition a i <$> bindMetas f e
-  DataDefinition d t -> uncurry DataDefinition <$> bindDataDefMetas f d t
+  -> Expr meta (FreeBindVar meta')
+  -> m (Definition (Expr meta') (FreeBindVar meta'), Expr meta' (FreeBindVar meta'))
+bindDefMetas f def typ = case def of
+  Definition a i e -> (,) <$> (Definition a i <$> bindMetas f e) <*> bindMetas f typ
+  DataDefinition d rep -> do
+    (d', typ') <- bindDataDefMetas f d typ
+    rep' <- bindMetas f rep
+    return (DataDefinition d' rep', typ')
 
 bindDefMetas'
   :: (MonadFresh m, MonadContext (FreeBindVar meta') m, MonadVIX m, MonadIO m)
   => (meta -> Vector (Plicitness, Expr meta' (FreeBindVar meta')) -> m (Expr meta' (FreeBindVar meta')))
   -> Definition (Expr meta) (FreeBindVar meta')
-  -> m (Definition (Expr meta') (FreeBindVar meta'))
+  -> Expr meta (FreeBindVar meta')
+  -> m (Definition (Expr meta') (FreeBindVar meta'), Expr meta' (FreeBindVar meta'))
 bindDefMetas' f = bindDefMetas $ \m es -> do
   es' <- traverse (traverse $ bindMetas' f) es
   f m es'
@@ -199,11 +211,11 @@ bindDataDefMetas
   -> Expr meta (FreeBindVar meta')
   -> m (DataDef (Expr meta') (FreeBindVar meta'), Expr meta' (FreeBindVar meta'))
 bindDataDefMetas f (DataDef cs) typ = do
-  vs <- forTeleWithPrefixM (telescope typ) $ \h p s vs -> do
+  typ' <- bindMetas f typ
+
+  vs <- forTeleWithPrefixM (telescope typ') $ \h p s vs -> do
     let t = instantiateTele pure vs s
-    -- TODO inefficient: make special-case forTeleWithPrefix + withVars
-    t' <- withVars vs $ bindMetas f t
-    forall h p t'
+    forall h p t
 
   withVars vs $ do
 
@@ -212,8 +224,6 @@ bindDataDefMetas f (DataDef cs) typ = do
     cs' <- forM cs $ \(ConstrDef c s) -> do
       e <- bindMetas f $ instantiateTele pure vs s
       return $ ConstrDef c $ abstract abstr e
-
-    typ' <- bindMetas f typ
 
     return (DataDef cs', typ')
 

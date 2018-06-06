@@ -12,7 +12,7 @@ import Analysis.Simplify
 import qualified Builtin.Names as Builtin
 import Inference.Constraint
 import Inference.Constructor
-import Inference.Match as Match
+import Inference.Match
 import Inference.MetaVar as MetaVar
 import Inference.Monad
 import Inference.Subtype

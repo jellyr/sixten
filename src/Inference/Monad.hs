@@ -6,6 +6,7 @@ import Control.Monad.Reader
 import Data.Foldable
 
 import qualified Builtin.Names as Builtin
+import Data.Monoid
 import Inference.MetaVar
 import MonadContext
 import MonadFresh
@@ -54,7 +55,7 @@ instance MonadContext FreeV Infer where
 
   withVar v (InferMonad m) = do
     locals <- localVars
-    when (v `elem` toList locals) $ internalError "Duplicate var in context"
+    when (v `elem` toList locals) $ internalError $ "Duplicate var " <> shower (varId v) <> " in context"
 
     InferMonad $ local
       (\env -> env { localVariables = localVariables env `Tsil.Snoc` v })

@@ -59,18 +59,19 @@ tcPats
 tcPats pats vs tele = do
   unless (Vector.length pats == teleLength tele)
     $ internalError "tcPats length mismatch"
-  results <- iforTeleWithPrefixM tele $ \i _ _ s prefix -> do
-    let argExprs = snd3 . fst <$> prefix
-        vs' | Vector.null prefix = vs
-            | otherwise = snd $ Vector.last prefix
+
+  results <- iforTeleWithPrefixM tele $ \i _ _ s results -> do
+    let argExprs = snd3 . fst <$> results
         expectedType = instantiateTele id argExprs s
         (p, pat) = pats Vector.! i
-    (pat', patExpr, vs'') <- withVars vs' $ checkPat p pat vs' expectedType
+        -- TODO could be more efficient
+        varPrefix = join (snd <$> results)
+        vs' = vs <> varPrefix
+    logShow 30 "tcPats vars" (varId <$> vs')
+    (pat', patExpr, vs'') <- withVars varPrefix $ checkPat p pat vs' expectedType
     return ((pat', patExpr, expectedType), vs'')
 
-  let vs' | Vector.null results = vs
-          | otherwise = snd $ Vector.last results
-  return (fst <$> results, vs')
+  return (fst <$> results, join (snd <$> results))
 
 tcPat
   :: Plicitness
@@ -105,14 +106,14 @@ tcPat' p pat vs expected = case pat of
         return expectedType
       CheckPat expectedType -> return expectedType
     v <- forall h p expectedType
-    return (Abstract.VarPat h v, pure v, vs <> pure v)
+    return (Abstract.VarPat h v, pure v, pure v)
   Concrete.LitPat lit -> do
     (pat', expr) <- instPatExpected
       expected
       (typeOfLiteral lit)
       (LitPat lit)
       (Abstract.Lit lit)
-    return (pat', expr, vs)
+    return (pat', expr, mempty)
   Concrete.ConPat cons pats -> do
     qc@(QConstr typeName _) <- resolveConstr cons $ case expected of
       CheckPat expectedType -> Just expectedType

@@ -20,6 +20,7 @@ import qualified Data.Vector as Vector
 import Data.Void
 
 import {-# SOURCE #-} Inference.TypeCheck.Expr
+import Analysis.Simplify
 import qualified Builtin.Names as Builtin
 import Inference.Constraint
 import Inference.Cycle
@@ -59,35 +60,35 @@ checkTopLevelDefType v def loc typ = located loc $ case def of
   Concrete.TopLevelPatClassDefinition _ -> error "checkTopLevelDefType class"
   Concrete.TopLevelPatInstanceDefinition _ -> error "checkTopLevelDefType instance"
 
-abstractDef
+abstractDefImplicits
   :: Foldable t
   => t FreeV
   -> Definition (Abstract.Expr MetaVar) FreeV
   -> AbstractM
   -> (Definition (Abstract.Expr MetaVar) FreeV, AbstractM)
-abstractDef vs (Definition a i e) t = do
-  let ge = abstract1s vs Abstract.Lam e
-      gt = abstract1s vs Abstract.Pi t
+abstractDefImplicits vs (Definition a i e) t = do
+  let ge = abstractImplicits vs Abstract.Lam e
+      gt = abstractImplicits vs Abstract.Pi t
   (Definition a i ge, gt)
-abstractDef vs (DataDefinition (DataDef cs) rep) typ = do
+abstractDefImplicits vs (DataDefinition (DataDef cs) rep) typ = do
   let cs' = map (fmap $ toScope . splat f g) cs
   -- Abstract vs on top of typ
-  let grep = abstract1s vs Abstract.Lam rep
-      gtyp = abstract1s vs Abstract.Pi typ
+  let grep = abstractImplicits vs Abstract.Lam rep
+      gtyp = abstractImplicits vs Abstract.Pi typ
   (DataDefinition (DataDef cs') grep, gtyp)
   where
     varIndex = hashedElemIndex $ toVector vs
     f v = pure $ maybe (F v) (B . TeleVar) (varIndex v)
     g = pure . B . (+ TeleVar (length vs))
 
-abstract1s
+abstractImplicits
   :: Foldable t
   => t FreeV
   -> (NameHint -> Plicitness -> AbstractM -> Scope () (Abstract.Expr MetaVar) FreeV -> AbstractM)
   -> AbstractM
   -> AbstractM
-abstract1s vs c b = foldr
-  (\v s -> c (varHint v) (varData v) (varType v) $ abstract1 v s)
+abstractImplicits vs c b = foldr
+  (\v s -> c (varHint v) (implicitise $ varData v) (varType v) $ abstract1 v s)
   b
   vs
 
@@ -95,47 +96,6 @@ data GeneraliseDefsMode
   = GeneraliseType
   | GeneraliseAll
   deriving (Eq, Show)
-
-{-
-generaliseDefs
-  :: GeneraliseDefsMode
-  -> Vector
-    ( FreeV
-    , Definition (Abstract.Expr MetaVar) FreeV
-    , AbstractM
-    )
-  -> Infer
-    ( Vector
-      ( FreeV
-      , Definition (Abstract.Expr MetaVar) FreeV
-      , AbstractM
-      )
-    , FreeV -> FreeV
-    )
-generaliseDefs mode defs = indentLog $ do
-  -- After type-checking we may actually be in a situation where a dependency
-  -- we thought existed doesn't actually exist because of class instances being
-  -- resolved (unresolved class instances are assumed to depend on all
-  -- instances), so we can't be sure that we have a single cycle. Therefore we
-  -- separately compute dependencies for each definition.
-  --
-  -- TODO: This needs to be done _after_ generalising, such that meta variable dependencies are not counted
-  zonkedDefs <- forM defs $ \(v, def, typ) -> do
-    def' <- zonkDef def
-    typ' <- zonk typ
-    return (v, def', typ')
-
-  let sortedDefs = topoSortWith fst3 (\(_, d, t) -> toHashSet d <> toHashSet t) zonkedDefs
-
-  genDefs <- mapM (generaliseDefsInner mode . toVector) sortedDefs
-
-  return (Vector.concat $ fst <$> genDefs, appEndo $ mconcat $ Endo . snd <$> genDefs)
-
-  -- Plan: Collect all the metas
-  -- Make them into FVs
-  -- topoSort
-  -- Generalise and substitute
--}
 
 generaliseDefs
   :: GeneraliseDefsMode
@@ -158,7 +118,7 @@ generaliseDefs mode defs = do
   varMap <- generaliseMetas metas'
   defs' <- replaceMetas varMap defs
   let defDeps = collectDefDeps (toHashSet $ HashMap.elems varMap) defs'
-  generaliseDefsInner defDeps
+  replaceDefs defDeps
 
 collectMetas
   :: GeneraliseDefsMode
@@ -169,6 +129,11 @@ collectMetas
     )
   -> Infer (HashSet MetaVar)
 collectMetas mode defs = do
+  -- After type-checking we may actually be in a situation where a dependency
+  -- we thought existed doesn't actually exist because of class instances being
+  -- resolved (unresolved class instances are assumed to depend on all
+  -- instances), so we can't be sure that we have a single cycle. Therefore we
+  -- separately compute dependencies for each definition.
   outerLevel <- level
 
   let isLocalConstraint m@MetaVar { metaPlicitness = Constraint } = isLocalMeta m
@@ -181,8 +146,12 @@ collectMetas mode defs = do
     GeneraliseAll -> forM defs $ \(_, def, _) ->
       filterMSet isLocalConstraint =<< definitionMetaVars def
 
-  typeVars <- forM defs $ \(_, _, typ) ->
-    filterMSet isLocalMeta =<< metaVars typ
+  typeVars <- forM defs $ \(_, _, typ) -> do
+    metas <- metaVars typ
+    logShow 30 "collectMetas" metas
+    filtered <- filterMSet isLocalMeta metas
+    logShow 30 "collectMetas filtered" filtered
+    return filtered
 
   return $ fold $ defVars <> typeVars
 
@@ -190,18 +159,25 @@ generaliseMetas
   :: HashSet MetaVar
   -> Infer (HashMap MetaVar FreeV)
 generaliseMetas metas = do
+  logShow 30 "generaliseMetas metas" metas
   instMetas <- forM (toList metas) $ \m -> do
     (instVs, instTyp) <- instantiatedMetaType m
     deps <- metaVars instTyp
     return (m, (instVs, instTyp, deps))
 
   let sortedMetas = acyclic <$> topoSortWith fst (thd3 . snd) instMetas
+  logShow 30 "generaliseMetas sorted" sortedMetas
 
   flip execStateT mempty $ forM_ sortedMetas $ \(m, (instVs, instTyp, _deps)) -> do
     sub <- get
-    instTyp' <- flip bindMetas instTyp $ \m' es -> return $ case HashMap.lookup m' sub of
-      Nothing -> Abstract.Meta m' es
-      Just v -> pure v
+    let go m' es = do
+          sol <- solution m'
+          case sol of
+            Left _ -> return $ case HashMap.lookup m' sub of
+              Nothing -> Abstract.Meta m' es
+              Just v -> pure v
+            Right e -> bindMetas' go $ betaApps (vacuous e) es
+    instTyp' <- bindMetas' go instTyp
     let localDeps = toHashSet instTyp' `HashSet.intersection` toHashSet instVs
     unless (HashSet.null localDeps) $ error "generaliseMetas local deps" -- TODO error message
     v <- forall (metaHint m) (metaPlicitness m) instTyp'
@@ -226,13 +202,19 @@ replaceMetas
       )
     )
 replaceMetas varMap defs = forM defs $ \(v, d, t) -> do
-  d' <- flip bindDefMetas' d $ \m es -> case HashMap.lookup m varMap of
-    Nothing -> return $ Abstract.Meta m es
-    Just e -> return $ pure e
-  t' <- flip bindMetas' t $ \m es -> case HashMap.lookup m varMap of
-    Nothing -> return $ Abstract.Meta m es
-    Just e -> return $ pure e
+  logShow 30 "replaceMetas varMap" varMap
+  logDefMeta 30 "replaceMetas def" d
+  (d', t') <- bindDefMetas' go d t
+  logDefMeta 30 "replaceMetas def result" d'
   return (v, d', t')
+  where
+    go m es = do
+      sol <- solution m
+      case sol of
+        Left _ -> return $ case HashMap.lookup m varMap of
+          Nothing -> Abstract.Meta m es
+          Just v -> pure v
+        Right e -> bindMetas' go $ betaApps (vacuous e) es
 
 collectDefDeps
   :: HashSet FreeV
@@ -263,7 +245,7 @@ collectDefDeps vars defs = do
     acyclic (AcyclicSCC a) = a
     acyclic (CyclicSCC _) = error "collectDefDeps"
 
-generaliseDefsInner
+replaceDefs
   :: Vector
     ( FreeV
     , ( Definition (Abstract.Expr MetaVar) FreeV
@@ -279,7 +261,7 @@ generaliseDefsInner
       )
     , FreeV -> FreeV
     )
-generaliseDefsInner defs = do
+replaceDefs defs = do
   let appSubMap
         = toHashMap
         $ (\(v, (_, _, vs)) -> (v, Abstract.apps (pure v) ((\v' -> (implicitise $ varData v', pure v')) <$> vs)))
@@ -287,9 +269,11 @@ generaliseDefsInner defs = do
       appSub v = HashMap.lookupDefault (pure v) v appSubMap
 
   subbedDefs <- forM defs $ \(oldVar, (def, typ, vs)) -> do
+    logDefMeta 30 "replaceDefs def" def
     let subbedDef = def >>>= appSub
         subbedType = typ >>= appSub
-        (def', typ') = abstractDef vs subbedDef subbedType
+        (def', typ') = abstractDefImplicits vs subbedDef subbedType
+    logDefMeta 30 "replaceDefs subbedDef" subbedDef
     newVar <- freeVar (varHint oldVar) (varData oldVar) typ'
     return (oldVar, newVar, def')
 
@@ -303,85 +287,6 @@ generaliseDefsInner defs = do
         <$> subbedDefs
 
   return (renamedDefs, rename)
-
-{-
-generaliseDefsInner
-  :: GeneraliseDefsMode
-  -> Vector
-    ( FreeV
-    , Definition (Abstract.Expr MetaVar) FreeV
-    , AbstractM
-    )
-  -> Infer
-    ( Vector
-      ( FreeV
-      , Definition (Abstract.Expr MetaVar) FreeV
-      , AbstractM
-      )
-    , FreeV -> FreeV
-    )
-generaliseDefsInner mode defs = do
-  let vars = (\(v, _, _) -> v) <$> defs
-
-  outerLevel <- level
-
-  let isLocalConstraint m@MetaVar { metaPlicitness = Constraint } = isLocalMeta m
-      isLocalConstraint _ = return False
-
-      isLocalMeta m = either (>= outerLevel) (const False) <$> solution m
-
-  defVars <- case mode of
-    GeneraliseType -> return mempty
-    GeneraliseAll -> forM defs $ \(_, def, _) ->
-      filterMSet isLocalConstraint =<< definitionMetaVars def
-
-  typeVars <- forM defs $ \(_, _, typ) ->
-    filterMSet isLocalMeta =<< metaVars typ
-
-  let metas = fold $ defVars <> typeVars
-
-  metas' <- mergeConstraintVars metas
-
-  metaSub <- generaliseMetas metas'
-
-  let freeVars = HashSet.map (metaSub HashMap.!) metas'
-
-  let sortedFreeVars = do
-        let sortedFvs = acyclic <$> topoSortWith id (toHashSet . varType) freeVars
-        [(implicitise $ varData fv, fv) | fv <- sortedFvs]
-
-  let lookupDef = hashedLookup $ (\v -> (v, Abstract.apps (pure v) $ second pure <$> sortedFreeVars)) <$> vars
-      sub v = fromMaybe (pure v) $ lookupDef v
-
-  subbedDefs <- forM defs $ \(v, d, t) -> do
-    d' <- flip bindDefMetas' d $ \m es -> case HashMap.lookup m metaSub of
-      Nothing -> return $ Abstract.Meta m es
-      Just e -> return $ pure e
-    t' <- flip bindMetas' t $ \m es -> case HashMap.lookup m metaSub of
-      Nothing -> return $ Abstract.Meta m es
-      Just e -> return $ pure e
-    let d'' = d' >>>= sub
-        t'' = t' >>= sub
-    return (v, d'', t'')
-
-  genDefs <- forM subbedDefs $ \(v, d, t) -> do
-    let (d', t') = abstractDef (snd <$> sortedFreeVars) d t
-    return (v, d', t')
-
-  newVars <- forM genDefs $ \(v, _, t) ->
-    forall (varHint v) (varData v) t
-
-  let lookupNewVar = hashedLookup $ Vector.zip vars newVars
-      newVarSub v = fromMaybe v $ lookupNewVar v
-
-  let newVarDefs = flip fmap (Vector.zip newVars genDefs) $ \(v, (_, d, t)) ->
-        (v, newVarSub <$> d, newVarSub <$> t)
-
-  return (newVarDefs, newVarSub)
-  where
-    acyclic (AcyclicSCC a) = a
-    acyclic (CyclicSCC _) = error "generaliseDefsInner"
-    -}
 
 checkRecursiveDefs
   :: Bool
@@ -409,49 +314,46 @@ checkRecursiveDefs forceGeneralisation defs = do
     unify [] (varType evar) typ'
     return (evar, (loc, def))
 
-  -- withVars (fst <$> defs) $ do
-  do
+  -- The definitions without type signature are checked and generalised,
+  -- assuming the type signatures of the others.
+  noSigResult <- checkAndElabDefs noSigDefs
 
-    -- The definitions without type signature are checked and generalised,
-    -- assuming the type signatures of the others.
-    noSigResult <- checkAndElabDefs noSigDefs
+  result <- if forceGeneralisation || shouldGeneralise defs then do
 
-    result <- if forceGeneralisation || shouldGeneralise defs then do
+    -- Generalise the definitions without signature
+    (genNoSigResult, noSigSub) <- generaliseDefs GeneraliseAll noSigResult
 
-      -- Generalise the definitions without signature
-      (genNoSigResult, noSigSub) <- generaliseDefs GeneraliseAll noSigResult
+    subbedSigDefs <- forM sigDefs' $ \(v, (loc, def)) -> do
+      let def' = def >>>= pure . noSigSub
+      return (v, (loc, def'))
 
-      subbedSigDefs <- forM sigDefs' $ \(v, (loc, def)) -> do
-        let def' = def >>>= pure . noSigSub
-        return (v, (loc, def'))
+    sigResult <- checkAndElabDefs subbedSigDefs
 
-      sigResult <- checkAndElabDefs subbedSigDefs
+    -- Generalise the definitions with signature
+    if Vector.null sigResult then
+        -- No need to generalise again if there are actually no definitions
+        -- with signatures
+        return genNoSigResult
+      else do
+        (genResult, _) <- generaliseDefs GeneraliseType $ genNoSigResult <> sigResult
+        return genResult
+  else do
+    sigResult <- checkAndElabDefs sigDefs'
+    return $ noSigResult <> sigResult
 
-      -- Generalise the definitions with signature
-      if Vector.null sigResult then
-          -- No need to generalise again if there are actually no definitions
-          -- with signatures
-          return genNoSigResult
-        else do
-          (genResult, _) <- generaliseDefs GeneraliseType $ genNoSigResult <> sigResult
-          return genResult
-    else do
-      sigResult <- checkAndElabDefs sigDefs'
-      return $ noSigResult <> sigResult
+  let locs = (\(_, (loc, _)) -> loc) <$> noSigDefs
+        <|> (\(_, (loc, _)) -> loc) <$> sigDefs'
 
-    let locs = (\(_, (loc, _)) -> loc) <$> noSigDefs
-          <|> (\(_, (loc, _)) -> loc) <$> sigDefs'
+  unless (Vector.length locs == Vector.length result) $
+    internalError $ "checkRecursiveDefs unmatched length" PP.<+> shower (Vector.length locs) PP.<+> shower (Vector.length result)
 
-    unless (Vector.length locs == Vector.length result) $
-      internalError $ "checkRecursiveDefs unmatched length" PP.<+> shower (Vector.length locs) PP.<+> shower (Vector.length result)
+  let locResult = Vector.zip locs result
 
-    let locResult = Vector.zip locs result
+  detectTypeRepCycles locResult
+  detectDefCycles locResult
 
-    detectTypeRepCycles locResult
-    detectDefCycles locResult
-
-    let permutation = Vector.zip (fst <$> defs) (fst <$> noSigDefs <|> fst <$> sigDefs)
-    return $ unpermute permutation result
+  let permutation = Vector.zip (fst <$> defs) (fst <$> noSigDefs <|> fst <$> sigDefs)
+  return $ unpermute permutation result
   where
     divide = bimap Vector.fromList Vector.fromList . foldMap go
       where
@@ -547,7 +449,9 @@ checkTopLevelRecursiveDefs defs = do
       vf :: FreeV -> Infer b
       vf v = internalError $ "checkTopLevelRecursiveDefs" PP.<+> shower v PP.<+> shower l
       mf :: MetaVar -> Infer b
-      mf v = internalError $ "checkTopLevelRecursiveDefs" PP.<+> shower v PP.<+> shower l
+      mf v = do
+        sol <- solution v
+        internalError $ "checkTopLevelRecursiveDefs" PP.<+> shower v PP.<+> shower sol PP.<+> shower l
 
   forM (Vector.zip names checkedDefs) $ \(name, (_, def, typ)) -> do
     logDefMeta 20 ("checkTopLevelRecursiveDefs def " ++ show (pretty name)) def

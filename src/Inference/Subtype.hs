@@ -13,7 +13,6 @@ import MonadContext
 import Syntax
 import Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
-import TypedFreeVar
 import Util
 import Util.Tsil
 import VIX

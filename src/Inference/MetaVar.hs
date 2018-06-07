@@ -74,6 +74,7 @@ existsAtLevel hint p typ a l = do
   i <- fresh
   ref <- liftST $ newSTRef $ Left l
   logVerbose 20 $ "exists: " <> shower i
+  logMeta 20 "exists typ: " typ
   return $ MetaVar i typ a hint p ref
 
 solution
@@ -94,6 +95,18 @@ isSolved = fmap isRight . solution
 
 isUnsolved :: MonadIO m => MetaVar -> m Bool
 isUnsolved = fmap isLeft . solution
+
+-- | Like freeVar, but with logging and explicitisation
+forall
+  :: (MonadFresh m, MonadVIX m, MonadIO m)
+  => NameHint
+  -> Plicitness
+  -> e (FreeVar Plicitness e)
+  -> m (FreeVar Plicitness e)
+forall h p t = do
+  v <- freeVar h (explicitise p) t
+  logVerbose 20 $ "forall: " <> shower (varId v)
+  return v
 
 traverseMetaSolution
   :: MonadIO m

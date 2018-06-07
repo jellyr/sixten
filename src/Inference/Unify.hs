@@ -124,13 +124,23 @@ unify' :: [(AbstractM, AbstractM)] -> (MetaVar -> Bool) -> AbstractM -> Abstract
 unify' cxt touchable type1 type2
   | type1 == type2 = return () -- TODO make specialised equality function to get rid of zonking in this and subtyping
   | otherwise = case (type1, type2) of
+    (Pi h1 p1 t1 s1, Pi h2 p2 t2 s2) | p1 == p2 -> absCase (h1 <> h2) p1 t1 t2 s1 s2
+    (Lam h1 p1 t1 s1, Lam h2 p2 t2 s2) | p1 == p2 -> absCase (h1 <> h2) p1 t1 t2 s1 s2
+    -- Eta-expand
+    (Lam h p t s, _) -> do
+      v <- forall h p t
+      withVar v $ unify cxt (instantiate1 (pure v) s) (App type2 p $ pure v)
+    (_, Lam h p t s) -> do
+      v <- forall h p t
+      withVar v $ unify cxt (App type1 p $ pure v) (instantiate1 (pure v) s)
+    -- Eta-reduce
+    (etaReduce -> Just type1', _) -> unify cxt type1' type2
+    (_, etaReduce -> Just type2') -> unify cxt type1 type2'
     -- If we have 'unify (f xs) t', where 'f' is an existential, and 'xs' are
     -- distinct universally quantified variables, then 'f = \xs. t' is a most
     -- general solution (see Miller, Dale (1991) "A Logic programming...")
-    (appsView -> (Meta m (distinctVars -> Just vs), distinctVars -> Just vs'), _) | touchable m -> solveVar unify m (vs <> toVector vs') type2
-    (_, appsView -> (Meta m (distinctVars -> Just vs), distinctVars -> Just vs')) | touchable m -> solveVar (flip . unify) m (vs <> toVector vs') type1
-    (Pi h1 p1 t1 s1, Pi h2 p2 t2 s2) | p1 == p2 -> absCase (h1 <> h2) p1 t1 t2 s1 s2
-    (Lam h1 p1 t1 s1, Lam h2 p2 t2 s2) | p1 == p2 -> absCase (h1 <> h2) p1 t1 t2 s1 s2
+    (appsView -> (Meta m es1, es2), _) | touchable m, Just vs <- distinctVars (es1 <> toVector es2) -> solveVar unify m vs type2
+    (_, appsView -> (Meta m es1, es2)) | touchable m, Just vs <- distinctVars (es1 <> toVector es2) -> solveVar (flip . unify) m vs type1
     -- Since we've already tried reducing the application, we can only hope to
     -- unify it pointwise.
     (App e1 p1 e1', App e2 p2 e2') | p1 == p2 -> do

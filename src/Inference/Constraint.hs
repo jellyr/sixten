@@ -40,15 +40,17 @@ elabUnsolvedConstraint
   :: MetaVar
   -> Infer (Maybe (Expr MetaVar Void))
 elabUnsolvedConstraint m = do
+  logShow 25 "elabUnsolvedConstraint" $ metaId m
   (vs, typ) <- instantiatedMetaType m
+  typ' <- simplifyExpr (const False) 0 <$> zonk typ
   case typ of
     (appsView -> (Global className, _)) -> do
       -- Try subsumption on all instances of the class until a match is found
       globalClassInstances <- liftVIX $ gets $ HashMap.lookupDefault mempty className . vixClassInstances
       let candidates = [(Global g, bimap absurd absurd t) | (g, t) <- globalClassInstances]
             <> [(pure v, varType v) | v <- toList vs, varData v == Constraint]
-      matchingInstances <- forM candidates $ \(inst, instType) -> tryMaybe $ do
-        f <- untouchable $ subtype instType typ
+      matchingInstances <- forM candidates $ \(inst, instanceType) -> tryMaybe $ do
+        f <- untouchable $ subtype instanceType typ'
         f inst
       case catMaybes matchingInstances of
         [] -> do
@@ -58,7 +60,7 @@ elabUnsolvedConstraint m = do
           let sol = assertClosed $ lams (varTelescope vs) (abstract (teleAbstraction vs) matchingInstance)
           solve m sol
           logMeta 25 "Matching instance" matchingInstance
-          logMeta 25 "Matching instance typ" typ
+          logMeta 25 "Matching instance typ" typ'
           return $ Just sol
     _ -> throwLocated "Malformed constraint" -- TODO error message
   where

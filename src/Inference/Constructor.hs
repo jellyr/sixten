@@ -54,7 +54,7 @@ resolveConstr cs expected = do
       typ' <- whnf typ
       case typ' of
         Abstract.Pi h p t s -> do
-          v <- forall h p t
+          v <- freeVar h p t
           findExpectedDataType $ Util.instantiate1 (pure v) s
         Abstract.App t1 _ _ -> findExpectedDataType t1
         Abstract.Global v -> do

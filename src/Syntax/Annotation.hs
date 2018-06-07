@@ -21,6 +21,11 @@ implicitise Constraint = Constraint
 implicitise Implicit = Implicit
 implicitise Explicit = Implicit
 
+explicitise :: Plicitness -> Plicitness
+explicitise Constraint = Constraint
+explicitise Implicit = Explicit
+explicitise Explicit = Explicit
+
 instance Hashable Plicitness where
 
 instance Show Plicitness where

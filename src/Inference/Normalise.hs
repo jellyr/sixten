@@ -111,7 +111,6 @@ whnfInner args expr = case expr of
   Con _ -> return expr
   Lit _ -> return expr
   Pi {} -> return expr
-  (etaReduce -> Just expr') -> whnf' args expr'
   Lam {} -> return expr
   App {} -> return expr
   Let ds scope -> do
@@ -142,7 +141,6 @@ normalise expr = do
     Con _ -> return expr
     Lit _ -> return expr
     Pi n p a s -> normaliseScope n p (Pi n p) a s
-    (etaReduce -> Just expr') -> normalise expr'
     Lam n p a s -> normaliseScope n p (Lam n p) a s
     Builtin.ProductTypeRep x y -> typeRepBinOp
       (Just TypeRep.UnitRep) (Just TypeRep.UnitRep)

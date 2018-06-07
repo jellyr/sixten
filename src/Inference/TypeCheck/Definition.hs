@@ -116,7 +116,9 @@ generaliseDefs mode defs = do
   metas <- collectMetas mode defs
   metas' <- mergeConstraintVars metas
   varMap <- generaliseMetas metas'
+  logShow 30 "generaliseDefs varMap" varMap
   defs' <- replaceMetas varMap defs
+  logShow 30 "generaliseDefs vars" (toHashSet $ HashMap.elems varMap)
   let defDeps = collectDefDeps (toHashSet $ HashMap.elems varMap) defs'
   replaceDefs defDeps
 
@@ -269,6 +271,7 @@ replaceDefs defs = do
       appSub v = HashMap.lookupDefault (pure v) v appSubMap
 
   subbedDefs <- forM defs $ \(oldVar, (def, typ, vs)) -> do
+    logShow 30 "replaceDefs vs" (varHint <$> vs)
     logDefMeta 30 "replaceDefs def" def
     let subbedDef = def >>>= appSub
         subbedType = typ >>= appSub
@@ -460,9 +463,6 @@ checkTopLevelRecursiveDefs defs = do
         unexposedTyp = typ >>= unexpose
     logDefMeta 20 ("checkTopLevelRecursiveDefs unexposedDef " ++ show (pretty name)) unexposedDef
     logMeta 20 ("checkTopLevelRecursiveDefs unexposedTyp " ++ show (pretty name)) unexposedTyp
-    VIX.log "aaa"
     unexposedDef' <- bitraverseDefinition mf vf unexposedDef
-    VIX.log "aaa"
     unexposedTyp' <- bitraverse mf vf unexposedTyp
-    VIX.log "aaa"
     return (name, unexposedDef', unexposedTyp')

@@ -85,10 +85,10 @@ checkClausesRho clauses rhoType = do
     let pats = Concrete.clausePatterns' clause
         bodyScope = Concrete.clauseScope' clause
     (pats', patVars) <- tcPats pats mempty argTele
-    let body = instantiatePattern pure patVars bodyScope
+    let body = instantiatePattern pure (boundPatVars patVars) bodyScope
         argExprs = snd3 <$> pats'
         returnType = instantiateTele id argExprs returnTypeScope
-    body' <- withVars patVars $ checkRho body returnType
+    body' <- withPatVars patVars $ checkRho body returnType
     return (fst3 <$> pats', body')
 
   forM_ clauses' $ \(pats, body) -> do
@@ -167,7 +167,7 @@ equaliseClauses clauses
       :: [(Plicitness, Concrete.Pat c (Scope b expr v) ())]
       -> ([(Plicitness, Concrete.Pat c (Scope b expr v) ())], [Plicitness])
     addImplicit pats@((Implicit, _):_) = (pats, mempty)
-    addImplicit pats = ((Implicit, Concrete.wildcardPat) : pats, mempty)
+    addImplicit pats = ((Implicit, Concrete.WildcardPat) : pats, mempty)
 
     addExplicit pats@((Explicit, _):_) = (pats, mempty)
     addExplicit pats = ((Explicit, Concrete.VarPat mempty ()) : pats, pure Explicit)

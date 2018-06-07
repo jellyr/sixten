@@ -15,6 +15,7 @@ import Util
 
 data Pat con typ b
   = VarPat !NameHint b
+  | WildcardPat
   | LitPat Literal
   | ConPat con (Vector (Plicitness, Pat con typ b))
   | AnnoPat (Pat con typ b) typ
@@ -24,9 +25,6 @@ data Pat con typ b
 
 -------------------------------------------------------------------------------
 -- Helpers
-wildcardPat :: Monoid v => Pat con typ v
-wildcardPat = VarPat "_" mempty
-
 liftPatEq
   :: (con1 -> con2 -> Bool)
   -> (typ1 -> typ2 -> Bool)
@@ -35,6 +33,7 @@ liftPatEq
   -> Pat con2 typ2 b
   -> Bool
 liftPatEq _ _ g (VarPat _ a) (VarPat _ b) = g a b
+liftPatEq _ _ _ WildcardPat WildcardPat = True
 liftPatEq _ _ _ (LitPat l1) (LitPat l2) = l1 == l2
 liftPatEq e f g (ConPat c1 as1) (ConPat c2 as2)
   = e c1 c2
@@ -48,6 +47,7 @@ liftPatEq _ _ _ _ _ = False
 nameHints :: Pat con typ b -> Vector NameHint
 nameHints pat = case pat of
   VarPat h _ -> pure h
+  WildcardPat -> mempty
   LitPat _ -> mempty
   ConPat _ ps -> ps >>= nameHints . snd
   AnnoPat p _ -> nameHints p
@@ -64,12 +64,14 @@ varPatView
   -> Maybe NameHint
 varPatView (PatLoc _ p) = varPatView p
 varPatView (VarPat h ~()) = Just h
+varPatView WildcardPat = Just mempty
 varPatView _ = Nothing
 
 -------------------------------------------------------------------------------
 -- Instances
 instance (Eq con, Eq typ, Eq b) => Eq (Pat con typ b) where
   VarPat h1 b1 == VarPat h2 b2 = h1 == h2 && b1 == b2
+  WildcardPat == WildcardPat = True
   LitPat l1 == LitPat l2 = l1 == l2
   ConPat c1 as1 == ConPat c2 as2 = c1 == c2 && as1 == as2
   AnnoPat t1 p1 == AnnoPat t2 p2 = t1 == t2 && p1 == p2
@@ -88,6 +90,7 @@ instance Monad (Pat con typ) where
     VarPat h b -> case f b of
       VarPat h' b' -> VarPat (h' <> h) b'
       fb -> fb
+    WildcardPat -> WildcardPat
     LitPat l -> LitPat l
     ConPat c pats -> ConPat c [(a, p >>= f) | (a, p) <- pats]
     AnnoPat p t -> AnnoPat (p >>= f) t
@@ -100,6 +103,7 @@ instance Bifoldable (Pat con) where bifoldMap = bifoldMapDefault
 instance Bitraversable (Pat con) where
   bitraverse f g pat = case pat of
     VarPat h b -> VarPat h <$> g b
+    WildcardPat -> pure WildcardPat
     LitPat l -> pure $ LitPat l
     ConPat c pats -> ConPat c <$> traverse (traverse (bitraverse f g)) pats
     AnnoPat p t -> AnnoPat <$> bitraverse f g p <*> f t
@@ -116,6 +120,7 @@ prettyPattern names = prettyM . fmap ((names Vector.!) . fst) . indexed
 instance (Pretty con, Pretty typ, Pretty b) => Pretty (Pat con typ b) where
   prettyM pat = case pat of
     VarPat _ b -> prettyM b
+    WildcardPat -> "_"
     LitPat l -> prettyM l
     ConPat c args -> prettyApps (prettyM c) $ (\(p, arg) -> prettyAnnotation p $ prettyM arg) <$> args
     AnnoPat t p -> parens `above` annoPrec $

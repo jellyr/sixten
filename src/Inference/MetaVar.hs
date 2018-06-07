@@ -116,20 +116,24 @@ instance Pretty a => Pretty (WithVar a) where
   prettyM (WithVar _ x) = prettyM x
 
 prettyMetaVar
-  :: MonadIO m
+  :: (MonadIO m, MonadVIX m)
   => MetaVar
   -> m Doc
 prettyMetaVar x = do
-  let name = "?" <> fromNameHint "" fromName (metaHint x) <> shower (metaId x)
+  let name = "?" <> fromNameHint "" fromName (metaHint x) <> shower (metaId x) <> "[" <> shower (metaArity x) <> "]"
   esol <- solution x
   case esol of
     Left _ -> return name
     Right sol -> do
+      v <- liftVIX $ gets vixVerbosity
       sol' <- prettyMeta sol
-      return $ PP.parens $ name PP.<+> "=" PP.<+> sol'
+      if v <= 30 then
+        return $ PP.parens $ sol'
+      else
+        return $ PP.parens $ name PP.<+> "=" PP.<+> sol'
 
 prettyMeta
-  :: (Pretty v, MonadIO m)
+  :: (Pretty v, MonadIO m, MonadVIX m)
   => Expr MetaVar v
   -> m Doc
 prettyMeta e = do
@@ -137,7 +141,7 @@ prettyMeta e = do
   return $ pretty e'
 
 prettyDefMeta
-  :: (Pretty v, MonadIO m)
+  :: (Pretty v, MonadIO m, MonadVIX m)
   => Definition (Expr MetaVar) v
   -> m Doc
 prettyDefMeta e = do

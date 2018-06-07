@@ -3,10 +3,8 @@ module Inference.Monad where
 
 import Control.Monad.Except
 import Control.Monad.Reader
-import Data.Foldable
 
 import qualified Builtin.Names as Builtin
-import Data.Monoid
 import Inference.MetaVar
 import MonadContext
 import MonadFresh
@@ -15,7 +13,6 @@ import qualified Syntax.Abstract as Abstract
 import qualified Syntax.Concrete.Scoped as Concrete
 import TypedFreeVar
 import Util
-import qualified Util.Tsil as Tsil
 import Util.Tsil(Tsil)
 import VIX
 
@@ -53,12 +50,9 @@ runInfer (InferMonad i) = runReaderT i InferEnv
 instance MonadContext FreeV Infer where
   localVars = InferMonad $ asks localVariables
 
-  withVar v (InferMonad m) = do
-    locals <- localVars
-    when (v `elem` toList locals) $ internalError $ "Duplicate var " <> shower (varId v) <> " in context"
-
+  inUpdatedContext f (InferMonad m) = do
     InferMonad $ local
-      (\env -> env { localVariables = localVariables env `Tsil.Snoc` v })
+      (\env -> env { localVariables = f $ localVariables env })
       m
 
 level :: Infer Level

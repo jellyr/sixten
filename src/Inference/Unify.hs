@@ -63,49 +63,53 @@ occurs cxt l mv expr = bitraverse_ go pure expr
             ] ++ intercalate ["", "while trying to unify"] explanation)
       | otherwise = do
         occurs cxt l mv $ vacuous $ metaType mv'
-        sol <- solution mv
+        sol <- solution mv'
         case sol of
           Left l' -> liftST $ writeSTRef (metaRef mv') $ Left $ min l l'
           Right expr' -> traverse_ go $ vacuous expr'
 
 prune :: HashSet FreeV -> AbstractM -> Infer AbstractM
-prune allowed expr = do
-  outerContext <- toHashSet <$> localVars
-  let go m es = do
-        sol <- solution m
-        case sol of
-          Right e -> bindMetas go $ betaApps (vacuous e) es
-          Left l -> do
-            innerContext <- toHashSet <$> localVars
-            case distinctVars es of
-              Nothing -> return $ Meta m es
-              Just vs
-                | Vector.length vs' == Vector.length vs -> return $ Meta m es
-                | otherwise -> do
-                  let m'Type = pis (varTelescope vs') $ abstract (teleAbstraction vs') mType
-                  m'Type' <- bindMetas go m'Type
-                  let typeFvs = toHashSet m'Type'
-                  if HashSet.null typeFvs then do
-                    m' <- existsAtLevel
-                      (metaHint m)
-                      (metaPlicitness m)
-                      (assertClosed m'Type')
-                      (Vector.length vs')
-                      l
-                    let e = Meta m' $ (\v -> (varData v, pure v)) <$> vs'
-                    solve m $ assertClosed $ lams (varTelescope vs) $ abstract (teleAbstraction vs) e
-                    return e
-                  else
-                    return $ Meta m es
-                | otherwise -> return $ Meta m es
-                where
-                  assertClosed :: Functor f => f FreeV -> f Void
-                  assertClosed = fmap $ error "prune assertClosed"
-                  allowed' = allowed <> innerContext `HashSet.difference` outerContext
-                  vs' = Vector.filter (`HashSet.member` allowed') vs
-                  Just mType = typeApps (vacuous $ metaType m) es
-
-  bindMetas go expr
+prune allowedVars expr = inUpdatedContext (const mempty) $ bindMetas go expr
+  where
+    go m es = do
+      sol <- solution m
+      case sol of
+        Right e -> bindMetas go $ betaApps (vacuous e) es
+        Left l -> do
+          locals <- toHashSet <$> localVars
+          case distinctVars es of
+            Nothing -> return $ Meta m es
+            Just vs
+              | Vector.length vs' == Vector.length vs -> return $ Meta m es
+              | otherwise -> do
+                let m'Type = pis (varTelescope vs') $ abstract (teleAbstraction vs') mType
+                m'Type' <- bindMetas go m'Type
+                let typeFvs = toHashSet m'Type'
+                if HashSet.null typeFvs then do
+                  logMeta 30 "prune m'Type'" m'Type'
+                  m' <- existsAtLevel
+                    (metaHint m)
+                    (metaPlicitness m)
+                    (assertClosed m'Type')
+                    (Vector.length vs')
+                    l
+                  let e = Meta m' $ (\v -> (varData v, pure v)) <$> vs'
+                      e' = lams (varTelescope vs) $ abstract (teleAbstraction vs) e
+                  logShow 30 "prune vs" $ varId <$> vs
+                  logShow 30 "prune varTypes" =<< (mapM (prettyMeta . varType) vs)
+                  logShow 30 "prune vs'" $ varId <$> vs'
+                  logShow 30 "prune varTypes'" =<< (mapM (prettyMeta . varType) vs')
+                  logMeta 30 "prune e'" e'
+                  solve m $ assertClosed e'
+                  return e
+                else
+                  return $ Meta m es
+              | otherwise -> return $ Meta m es
+              where
+                assertClosed :: Functor f => f FreeV -> f Void
+                assertClosed = fmap $ error "prune assertClosed"
+                vs' = Vector.filter (`HashSet.member` (allowedVars <> locals)) vs
+                Just mType = typeApps (vacuous $ metaType m) es
 
 unify :: [(AbstractM, AbstractM)] -> AbstractM -> AbstractM -> Infer ()
 unify cxt type1 type2 = do
@@ -120,14 +124,11 @@ unify' :: [(AbstractM, AbstractM)] -> (MetaVar -> Bool) -> AbstractM -> Abstract
 unify' cxt touchable type1 type2
   | type1 == type2 = return () -- TODO make specialised equality function to get rid of zonking in this and subtyping
   | otherwise = case (type1, type2) of
-    -- TODO Handle same metavariable with different args
-    -- See Higher-Order Dynamic Pattern Unification for Dependent Types and Records
-
     -- If we have 'unify (f xs) t', where 'f' is an existential, and 'xs' are
     -- distinct universally quantified variables, then 'f = \xs. t' is a most
     -- general solution (see Miller, Dale (1991) "A Logic programming...")
-    (Meta m (distinctVars -> Just vs), _) | touchable m -> solveVar unify m vs type2
-    (_, Meta m (distinctVars -> Just vs)) | touchable m -> solveVar (flip . unify) m vs type1
+    (appsView -> (Meta m (distinctVars -> Just vs), distinctVars -> Just vs'), _) | touchable m -> solveVar unify m (vs <> toVector vs') type2
+    (_, appsView -> (Meta m (distinctVars -> Just vs), distinctVars -> Just vs')) | touchable m -> solveVar (flip . unify) m (vs <> toVector vs') type1
     (Pi h1 p1 t1 s1, Pi h2 p2 t2 s2) | p1 == p2 -> absCase (h1 <> h2) p1 t1 t2 s1 s2
     (Lam h1 p1 t1 s1, Lam h2 p2 t2 s2) | p1 == p2 -> absCase (h1 <> h2) p1 t1 t2 s1 s2
     -- Since we've already tried reducing the application, we can only hope to
@@ -158,17 +159,19 @@ unify' cxt touchable type1 type2
       sol <- solution m
       case sol of
         Left l -> do
-          t' <- normalise =<< prune (toHashSet vs) t
-          occurs cxt l m t'
-          let lamt = lams (varTelescope vs) $ abstract (teleAbstraction vs) t'
-          lamtType <- typeOf lamt
-          logShow 30 "vs" vs
-          logMeta 30 ("solving 1 " <> show (metaId m)) t'
-          logMeta 30 ("solving 2 " <> show (metaId m)) lamt
-          lamt' <- traverse (error "Unify TODO error message") lamt
+          prunedt <- prune (toHashSet vs) t
+          let lamt = lams (varTelescope vs) $ abstract (teleAbstraction vs) prunedt
+          normLamt <- simplifyExpr (const False) 0 <$> zonk lamt
+          logShow 30 "vs" (varId <$> vs)
+          logMeta 30 ("solving t " <> show (metaId m)) t
+          logMeta 30 ("solving prunedt " <> show (metaId m)) prunedt
+          logMeta 30 ("solving lamt " <> show (metaId m)) lamt
+          logMeta 30 ("solving normlamt " <> show (metaId m)) normLamt
+          occurs cxt l m normLamt
+          lamtType <- typeOf normLamt
+          closedLamt <- traverse (\v -> error $ "Unify TODO error message" ++ shower (pretty v)) normLamt
           recurse cxt (vacuous $ metaType m) lamtType
-          logMeta 30 ("solving " <> show (metaId m)) lamt
-          solve m lamt'
+          solve m closedLamt
         Right c -> recurse cxt (apps (vacuous c) $ (\v -> (varData v, pure v)) <$> vs) t
 
 distinctVars :: (Eq v, Hashable v, Traversable t) => t (p, Expr m v) -> Maybe (t v)

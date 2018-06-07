@@ -28,7 +28,7 @@ newtype SLam a = SLam { runSlam :: VIX a }
 -- | Dummy instance, since we don't use the context
 instance MonadContext FreeV SLam where
   localVars = return mempty
-  withVar _ m = m
+  inUpdatedContext _ m = m
 
 slamAnno :: AbstractM -> SLam (Anno SLambda.Expr FreeV)
 slamAnno e = Anno <$> slam e <*> (slam =<< whnfExpandingTypeReps =<< typeOf e)

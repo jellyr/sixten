@@ -100,8 +100,8 @@ declass qname loc classDef typ = do
         , Just $ implicitPiParams $ toScope $ classParam $ fromScope mtyp
         )
       | (i, MethodDef mname mloc mtyp) <- zip [0..] $ classMethods classDef
-      , let prePats = Vector.replicate i wildcardPat
-            postPats = Vector.replicate (numMethods - i - 1) wildcardPat
+      , let prePats = Vector.replicate i WildcardPat
+            postPats = Vector.replicate (numMethods - i - 1) WildcardPat
             pats = (,) Explicit <$> prePats <> pure (VarPat mempty ()) <> postPats
       ]
       )

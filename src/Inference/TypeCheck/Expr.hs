@@ -126,9 +126,9 @@ tcRho expr expected expectedAppResult = case expr of
     f <- instExpected expected typ
     f $ Abstract.Con qc
   Concrete.Pi p pat bodyScope -> do
-    (pat', _, vs, patType) <- inferPat p pat mempty
-    withVars vs $ do
-      let body = instantiatePattern pure vs bodyScope
+    (pat', _, patVars, patType) <- inferPat p pat mempty
+    withPatVars patVars $ do
+      let body = instantiatePattern pure (boundPatVars patVars) bodyScope
           h = Concrete.patternHint pat
       body' <- enterLevel $ checkPoly body Builtin.Type
       f <- instExpected expected Builtin.Type
@@ -139,9 +139,9 @@ tcRho expr expected expectedAppResult = case expr of
     let h = Concrete.patternHint pat
     case expected of
       Infer {} -> do
-        (pat', _, vs, argType) <- inferPat p pat mempty
-        withVars vs $ do
-          let body = instantiatePattern pure vs bodyScope
+        (pat', _, patVars, argType) <- inferPat p pat mempty
+        withPatVars patVars $ do
+          let body = instantiatePattern pure (boundPatVars patVars) bodyScope
           (body', bodyType) <- enterLevel $ inferRho body (InstUntil Explicit) Nothing
           argVar <- forall h p argType
           body'' <- withVar argVar $ matchSingle (pure argVar) pat' body' bodyType
@@ -152,9 +152,9 @@ tcRho expr expected expectedAppResult = case expr of
       Check expectedType -> do
         (typeh, argType, bodyTypeScope, fResult) <- funSubtype expectedType p
         let h' = h <> typeh
-        (pat', patExpr, vs) <- checkPat p pat mempty argType
-        withVars vs $ do
-          let body = instantiatePattern pure vs bodyScope
+        (pat', patExpr, patVars) <- checkPat p pat mempty argType
+        withPatVars patVars $ do
+          let body = instantiatePattern pure (boundPatVars patVars) bodyScope
               bodyType = Util.instantiate1 patExpr bodyTypeScope
           body' <- enterLevel $ checkPoly body bodyType
           argVar <- forall h' p argType
@@ -226,19 +226,19 @@ tcBranches expr pbrs expected expectedAppResult = do
   (expr', exprType) <- inferRho expr (InstUntil Explicit) Nothing
 
   inferredPats <- forM pbrs $ \(pat, brScope) -> do
-    (pat', _, vs) <- checkPat Explicit (void pat) mempty exprType
-    let br = instantiatePattern pure vs brScope
-    return (pat', br, vs)
+    (pat', _, patVars) <- checkPat Explicit (void pat) mempty exprType
+    let br = instantiatePattern pure (boundPatVars patVars) brScope
+    return (pat', br, patVars)
 
   (inferredBranches, resType) <- case expected of
     Check resType -> do
-      brs <- forM inferredPats $ \(pat, br, vs) -> withVars vs $ do
+      brs <- forM inferredPats $ \(pat, br, patVars) -> withPatVars patVars $ do
         br' <- checkRho br resType
         return (pat, br')
       return (brs, resType)
     Infer _ instUntil -> do
       resType <- existsType mempty
-      brs <- forM inferredPats $ \(pat, br, vs) -> withVars vs $ do
+      brs <- forM inferredPats $ \(pat, br, patVars) -> withPatVars patVars $ do
         (br', brType) <- inferRho br instUntil expectedAppResult
         unify mempty brType resType
         return (pat, br')

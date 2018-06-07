@@ -10,7 +10,6 @@ import Data.Monoid
 import qualified Data.MultiSet as MultiSet
 import qualified Data.Set as Set
 import qualified Data.Vector as Vector
-import Data.Void
 
 import Inference.Normalise
 import Syntax
@@ -20,11 +19,11 @@ import Util
 simplifyExpr
   :: (QName -> Bool)
   -> Int
-  -> Expr Void v
-  -> Expr Void v
+  -> Expr meta v
+  -> Expr meta v
 simplifyExpr glob !applied expr = case expr of
   Var _ -> expr
-  Meta v _ -> absurd v
+  Meta v es -> Meta v $ fmap (simplifyExpr glob 0) <$> es
   Global _ -> expr
   Con _ -> expr
   Lit _ -> expr
@@ -95,16 +94,16 @@ let_ glob h e t s
 
 simplifyDef
   :: (QName -> Bool)
-  -> Definition (Expr Void) v
-  -> Definition (Expr Void) v
+  -> Definition (Expr meta) v
+  -> Definition (Expr meta) v
 simplifyDef glob = hoist $ simplifyExpr glob 0
 
 etaLams
   :: (QName -> Bool)
   -> Int
-  -> Telescope Plicitness (Expr Void) v
-  -> Scope TeleVar (Expr Void) v
-  -> Expr Void v
+  -> Telescope Plicitness (Expr meta) v
+  -> Scope TeleVar (Expr meta) v
+  -> Expr meta v
 etaLams glob applied tele scope = case go 0 $ fromScope scope of
   Nothing -> lams tele scope
   Just (i, expr) -> lams (takeTele (len - i) tele) $ toScope expr

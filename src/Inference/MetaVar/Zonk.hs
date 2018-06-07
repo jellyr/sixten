@@ -30,10 +30,9 @@ metaVars expr = execStateT (hoistMetas_ go expr) mempty
       visited <- get
       unless (m `HashSet.member` visited) $ do
         put $ HashSet.insert m visited
-        hoistMetas_ go $ metaType m
         sol <- solution m
         case sol of
-          Left _ -> return ()
+          Left _ -> hoistMetas_ go $ metaType m
           Right e -> hoistMetas_ go e
 
 definitionMetaVars

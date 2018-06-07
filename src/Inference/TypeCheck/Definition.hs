@@ -113,13 +113,14 @@ generaliseDefs
     , FreeV -> FreeV
     )
 generaliseDefs mode defs = do
-  metas <- collectMetas mode defs
+  defs' <- elabRecursiveDefs defs
+  metas <- collectMetas mode defs'
   metas' <- mergeConstraintVars metas
   varMap <- generaliseMetas metas'
   logShow 30 "generaliseDefs varMap" varMap
-  defs' <- replaceMetas varMap defs
+  defs'' <- replaceMetas varMap defs'
   logShow 30 "generaliseDefs vars" (toHashSet $ HashMap.elems varMap)
-  let defDeps = collectDefDeps (toHashSet $ HashMap.elems varMap) defs'
+  let defDeps = collectDefDeps (toHashSet $ HashMap.elems varMap) defs''
   replaceDefs defDeps
 
 collectMetas
@@ -142,6 +143,8 @@ collectMetas mode defs = do
       isLocalConstraint _ = return False
 
       isLocalMeta m = either (>= outerLevel) (const False) <$> solution m
+
+  -- TODO use special form of metaVars that doesn't count metavar dependencies?
 
   defVars <- case mode of
     GeneraliseType -> return mempty
@@ -319,18 +322,18 @@ checkRecursiveDefs forceGeneralisation defs = do
 
   -- The definitions without type signature are checked and generalised,
   -- assuming the type signatures of the others.
-  noSigResult <- checkAndElabDefs noSigDefs
+  noSigResult <- withVars (fst <$> sigDefs) $ checkTopLevelDefs noSigDefs
 
   result <- if forceGeneralisation || shouldGeneralise defs then do
 
     -- Generalise the definitions without signature
-    (genNoSigResult, noSigSub) <- generaliseDefs GeneraliseAll noSigResult
+    (genNoSigResult, noSigSub) <- withVars (fst <$> sigDefs) $ generaliseDefs GeneraliseAll noSigResult
 
     subbedSigDefs <- forM sigDefs' $ \(v, (loc, def)) -> do
       let def' = def >>>= pure . noSigSub
       return (v, (loc, def'))
 
-    sigResult <- checkAndElabDefs subbedSigDefs
+    sigResult <- withVars (fst3 <$> genNoSigResult <|> fst <$> sigDefs) $ checkTopLevelDefs subbedSigDefs
 
     -- Generalise the definitions with signature
     if Vector.null sigResult then
@@ -338,10 +341,10 @@ checkRecursiveDefs forceGeneralisation defs = do
         -- with signatures
         return genNoSigResult
       else do
-        (genResult, _) <- generaliseDefs GeneraliseType $ genNoSigResult <> sigResult
+        (genResult, _) <- withVars (fst3 <$> genNoSigResult <> sigResult) $ generaliseDefs GeneraliseType $ genNoSigResult <> sigResult
         return genResult
   else do
-    sigResult <- checkAndElabDefs sigDefs'
+    sigResult <- checkTopLevelDefs sigDefs'
     return $ noSigResult <> sigResult
 
   let locs = (\(_, (loc, _)) -> loc) <$> noSigDefs
@@ -363,7 +366,7 @@ checkRecursiveDefs forceGeneralisation defs = do
         go (v, (loc, def, Nothing)) = ([(v, (loc, def))], [])
         go (v, (loc, def, Just t)) = ([], [(v, (loc, def, t))])
 
-checkAndElabDefs
+checkTopLevelDefs
   :: Vector
     ( FreeV
     , ( SourceLoc
@@ -377,21 +380,19 @@ checkAndElabDefs
       , AbstractM
       )
     )
-checkAndElabDefs defs = indentLog $ do
+checkTopLevelDefs defs = indentLog $ do
   -- forM_ defs $ \(var, (_, def)) ->
-  --   logMeta 20 ("checkAndElabDefs " ++ show (pretty $ fromNameHint "" id $ varHint var)) def
+  --   logMeta 20 ("checkTopLevelDefs " ++ show (pretty $ fromNameHint "" id $ varHint var)) def
 
   checkedDefs <- forM defs $ \(var, (loc, def)) -> do
     (def', typ'') <- checkTopLevelDefType var def loc $ varType var
-    return (loc, (var, def', typ''))
-
-  elabDefs <- elabRecursiveDefs $ snd <$> checkedDefs
+    return (var, def', typ'')
 
 --   forM_ elabDefs $ \(var, def, typ) -> do
---     logMeta 20 ("checkAndElabDefs res " ++ show (pretty $ fromNameHint "" id $ metaHint var)) def
---     logMeta 20 ("checkAndElabDefs res t " ++ show (pretty $ fromNameHint "" id $ metaHint var)) typ
+--     logMeta 20 ("checkTopLevelDefs res " ++ show (pretty $ fromNameHint "" id $ metaHint var)) def
+--     logMeta 20 ("checkTopLevelDefs res t " ++ show (pretty $ fromNameHint "" id $ metaHint var)) typ
 
-  return elabDefs
+  return checkedDefs
 
 shouldGeneralise
   :: Vector
@@ -442,7 +443,7 @@ checkTopLevelRecursiveDefs defs = do
     let exposedDefs = flip fmap defs $ \(_, loc, def, mtyp) ->
           (loc, gbound expose $ vacuous def, gbind expose . vacuous <$> mtyp)
 
-    withVars vars $ checkRecursiveDefs True (Vector.zip vars exposedDefs)
+    checkRecursiveDefs True (Vector.zip vars exposedDefs)
 
   let vars' = (\(v, _, _) -> v) <$> checkedDefs
 

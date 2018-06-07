@@ -3,6 +3,7 @@ module Inference.Unify where
 
 import Control.Monad.Except
 import Data.Bifoldable
+import Data.Bifunctor
 import Data.Foldable
 import Data.Hashable
 import qualified Data.HashSet as HashSet
@@ -18,7 +19,8 @@ import Analysis.Simplify
 import Inference.MetaVar
 import Inference.MetaVar.Zonk
 import Inference.Monad
-import Inference.Normalise
+import Inference.Normalise hiding (whnf)
+import {-# SOURCE #-} Inference.Constraint
 import Inference.TypeOf
 import MonadContext
 import Pretty
@@ -62,7 +64,7 @@ occurs cxt l mv expr = bitraverse_ go pure expr
             , "while trying to unify"
             ] ++ intercalate ["", "while trying to unify"] explanation)
       | otherwise = do
-        occurs cxt l mv $ vacuous $ metaType mv'
+        -- occurs cxt l mv $ vacuous $ metaType mv'
         sol <- solution mv'
         case sol of
           Left l' -> liftST $ writeSTRef (metaRef mv') $ Left $ min l l'
@@ -79,10 +81,10 @@ prune allowedVars expr = inUpdatedContext (const mempty) $ bindMetas go expr
           locals <- toHashSet <$> localVars
           case distinctVars es of
             Nothing -> return $ Meta m es
-            Just vs
+            Just pvs
               | Vector.length vs' == Vector.length vs -> return $ Meta m es
               | otherwise -> do
-                let m'Type = pis (varTelescope vs') $ abstract (teleAbstraction vs') mType
+                let m'Type = pis (varTelescope' pvs') $ abstract (teleAbstraction vs') mType
                 m'Type' <- bindMetas go m'Type
                 let typeFvs = toHashSet m'Type'
                 if HashSet.null typeFvs then do
@@ -94,7 +96,7 @@ prune allowedVars expr = inUpdatedContext (const mempty) $ bindMetas go expr
                     (Vector.length vs')
                     l
                   let e = Meta m' $ (\v -> (varData v, pure v)) <$> vs'
-                      e' = lams (varTelescope vs) $ abstract (teleAbstraction vs) e
+                      e' = lams (varTelescope' pvs) $ abstract (teleAbstraction vs) e
                   logShow 30 "prune vs" $ varId <$> vs
                   logShow 30 "prune varTypes" =<< (mapM (prettyMeta . varType) vs)
                   logShow 30 "prune vs'" $ varId <$> vs'
@@ -108,7 +110,9 @@ prune allowedVars expr = inUpdatedContext (const mempty) $ bindMetas go expr
               where
                 assertClosed :: Functor f => f FreeV -> f Void
                 assertClosed = fmap $ error "prune assertClosed"
-                vs' = Vector.filter (`HashSet.member` (allowedVars <> locals)) vs
+                pvs' = Vector.filter ((`HashSet.member` (allowedVars <> locals)) . snd) pvs
+                vs = snd <$> pvs
+                vs' = snd <$> pvs'
                 Just mType = typeApps (vacuous $ metaType m) es
 
 unify :: [(AbstractM, AbstractM)] -> AbstractM -> AbstractM -> Infer ()
@@ -139,8 +143,8 @@ unify' cxt touchable type1 type2
     -- If we have 'unify (f xs) t', where 'f' is an existential, and 'xs' are
     -- distinct universally quantified variables, then 'f = \xs. t' is a most
     -- general solution (see Miller, Dale (1991) "A Logic programming...")
-    (appsView -> (Meta m es1, es2), _) | touchable m, Just vs <- distinctVars (es1 <> toVector es2) -> solveVar unify m vs type2
-    (_, appsView -> (Meta m es1, es2)) | touchable m, Just vs <- distinctVars (es1 <> toVector es2) -> solveVar (flip . unify) m vs type1
+    (appsView -> (Meta m es1, es2), _) | touchable m, Just pvs <- distinctVars (es1 <> toVector es2) -> solveVar unify m pvs type2
+    (_, appsView -> (Meta m es1, es2)) | touchable m, Just pvs <- distinctVars (es1 <> toVector es2) -> solveVar (flip . unify) m pvs type1
     -- Since we've already tried reducing the application, we can only hope to
     -- unify it pointwise.
     (App e1 p1 e1', App e2 p2 e2') | p1 == p2 -> do
@@ -165,12 +169,14 @@ unify' cxt touchable type1 type2
       unify cxt t1 t2
       v <- forall h p t1
       withVar v $ unify cxt (instantiate1 (pure v) s1) (instantiate1 (pure v) s2)
-    solveVar recurse m vs t = do
+    solveVar recurse m pvs t = do
       sol <- solution m
       case sol of
         Left l -> do
+          let vs = snd <$> pvs
+          -- TODO pruning might need to take into account extra args like unify
           prunedt <- prune (toHashSet vs) t
-          let lamt = lams (varTelescope vs) $ abstract (teleAbstraction vs) prunedt
+          let lamt = lams (varTelescope' pvs) $ abstract (teleAbstraction vs) prunedt
           normLamt <- simplifyExpr (const False) 0 <$> zonk lamt
           logShow 30 "vs" (varId <$> vs)
           logMeta 30 ("solving t " <> show (metaId m)) t
@@ -182,15 +188,15 @@ unify' cxt touchable type1 type2
           closedLamt <- traverse (\v -> error $ "Unify TODO error message" ++ shower (pretty v)) normLamt
           recurse cxt (vacuous $ metaType m) lamtType
           solve m closedLamt
-        Right c -> recurse cxt (apps (vacuous c) $ (\v -> (varData v, pure v)) <$> vs) t
+        Right c -> recurse cxt (apps (vacuous c) $ second pure <$> pvs) t
 
-distinctVars :: (Eq v, Hashable v, Traversable t) => t (p, Expr m v) -> Maybe (t v)
+distinctVars :: (Eq v, Hashable v, Traversable t) => t (p, Expr m v) -> Maybe (t (p, v))
 distinctVars es = case traverse isVar es of
-  Just es' | distinct es' -> Just es'
+  Just es' | distinct (snd <$> es') -> Just es'
   _ -> Nothing
 
-isVar :: (p, Expr m a) -> Maybe a
-isVar (_, Var v) = Just v
+isVar :: (p, Expr m a) -> Maybe (p, a)
+isVar (p, Var v) = Just (p, v)
 isVar _ = Nothing
 
 distinct :: (Foldable t, Hashable a, Eq a) => t a -> Bool

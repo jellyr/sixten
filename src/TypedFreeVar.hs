@@ -55,6 +55,18 @@ freeVar h d t = do
   i <- fresh
   return $ FreeVar i h d t
 
+-- | Like freeVar, but with logging
+forall
+  :: (MonadFresh m, MonadVIX m, MonadIO m)
+  => NameHint
+  -> d
+  -> e (FreeVar d e)
+  -> m (FreeVar d e)
+forall h p t = do
+  v <- freeVar h p t
+  logVerbose 20 $ "forall: " <> shower (varId v)
+  return v
+
 showFreeVar
   :: (Functor e, Functor f, Foldable f, Pretty (f Doc), Pretty (e Doc))
   => f (FreeVar d e)
@@ -88,3 +100,14 @@ varTelescope vs =
   <$> vs
   where
     abstr = teleAbstraction vs
+
+varTelescope'
+  :: Monad e
+  => Vector (d, FreeVar d' e)
+  -> Telescope d e (FreeVar d' e)
+varTelescope' vs =
+  Telescope
+  $ (\(d, v) -> TeleArg (varHint v) d $ abstract abstr $ varType v)
+  <$> vs
+  where
+    abstr = teleAbstraction (snd <$> vs)

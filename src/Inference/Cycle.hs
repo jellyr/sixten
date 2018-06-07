@@ -20,6 +20,7 @@ import Inference.MetaVar.Zonk
 import Inference.Monad
 import Syntax
 import Syntax.Abstract
+import TypedFreeVar
 import Util
 import Util.TopoSort
 

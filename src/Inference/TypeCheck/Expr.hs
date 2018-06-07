@@ -186,7 +186,7 @@ tcRho expr expected expectedAppResult = case expr of
               , Concrete.TopLevelPatDefinition $ Concrete.instantiateLetClause pure evars <$> def
               , instantiateLet pure evars <$> mtyp
               )) <$> ds
-    ds' <- withVars evars $ checkRecursiveDefs False (Vector.zip evars instantiatedDs)
+    ds' <- checkRecursiveDefs False (Vector.zip evars instantiatedDs)
     let evars' = (\(v, _, _) -> v) <$> ds'
         eabstr = letAbstraction evars'
     let ds'' = LetRec

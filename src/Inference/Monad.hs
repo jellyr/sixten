@@ -71,6 +71,7 @@ exists hint d typ = do
   let tele = varTelescope locals
       abstr = teleAbstraction locals
       typ' = Abstract.pis tele $ abstract abstr typ
+  logMeta 30 "exists typ" typ
   typ'' <- traverse (error "exists not closed") typ'
   v <- existsAtLevel hint d typ'' (teleLength tele) =<< level
   return $ Abstract.Meta v $ (\fv -> (varData fv, pure fv)) <$> locals

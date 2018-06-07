@@ -167,7 +167,7 @@ normalise expr = do
       e <- instantiateLetM ds scope
       normalise e
     Case e brs retType -> do
-      e' <- whnf e
+      e' <- normalise e
       res <- chooseBranch e' brs retType normalise
       case res of
         Case e'' brs' retType' -> Case e'' <$> (case brs' of

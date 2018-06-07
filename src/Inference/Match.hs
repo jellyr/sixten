@@ -14,10 +14,10 @@ import Data.Vector(Vector)
 
 import qualified Analysis.Simplify as Simplify
 import qualified Builtin.Names as Builtin
+import Inference.Constraint
 import Inference.MetaVar
 import Inference.MetaVar.Zonk
 import Inference.Monad
-import Inference.Normalise
 import Inference.TypeOf
 import MonadContext
 import Syntax
